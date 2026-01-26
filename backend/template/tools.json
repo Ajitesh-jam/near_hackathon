@@ -1,0 +1,14 @@
+[
+    {
+        "tool_name":"web_search",
+        "tool_description":"Search the web for recent information and return concise result snippets.",
+        "tool_parameters":{
+            "query":{
+                "type":"string",
+                "description":"The search query or question."
+            }
+        },
+        "code":"tool code here : def <tool_name>(tool_parameters:parameter_type) -> str: return <tool_name> result"
+    }
+        
+]
