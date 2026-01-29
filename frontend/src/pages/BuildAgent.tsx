@@ -7,10 +7,14 @@ import {
   MessageSquare,
   ChevronRight,
   Loader2,
-  Play
+  Play,
+  Send,
+  Bot,
+  User
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Navbar } from '@/components/Navbar';
 import { ToolsSection, Tool } from '@/components/ToolsSection';
 import { PromptEditor, defaultPrompt } from '@/components/PromptEditor';
@@ -20,6 +24,7 @@ import { toast } from 'sonner';
 import { useForgeSession } from '@/hooks/useForgeSession';
 import { templateCodeToFileNodes, getStepIndexForStage, fileNodesToTemplateCode } from '@/lib/workflowUtils';
 import { Label } from '@/components/ui/label';
+import { api } from '@/lib/api/client';
 
 // Simplified steps matching the exact workflow
 const steps = [
@@ -36,8 +41,12 @@ const BuildAgent = () => {
   const [clarificationAnswers, setClarificationAnswers] = useState<Record<number, string>>({});
   const [codeEditorFiles, setCodeEditorFiles] = useState<FileNode[]>([]);
   const [toolRequirements, setToolRequirements] = useState('');
+  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isGeneratingCode, setIsGeneratingCode] = useState(false);
   const hasUserSelectedTools = useRef(false);
   const lastWaitingStage = useRef<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
   
   // HITL workflow session
   const {
@@ -82,19 +91,31 @@ const BuildAgent = () => {
       
       lastWaitingStage.current = sessionStatus.waiting_stage;
       
-      // Sync code editor files when template_code changes
+      // Sync code editor files when template_code first becomes available
       if (sessionStatus.template_code && Object.keys(sessionStatus.template_code).length > 0) {
-        const files = templateCodeToFileNodes(sessionStatus.template_code);
-        setCodeEditorFiles(files);
+        // Only update if we don't have files yet or if this is a new code generation
+        if (codeEditorFiles.length === 0) {
+          const files = templateCodeToFileNodes(sessionStatus.template_code);
+          setCodeEditorFiles(files);
+        }
       }
       
       // Auto-navigate to appropriate step based on waiting_stage
       if (sessionStatus.waiting_for_input) {
         const stepIndex = getStepIndexForStage(sessionStatus.waiting_stage);
         setCurrentStep(stepIndex);
+      } else if (sessionStatus.waiting_stage === 'code_review' || 
+                 (sessionStatus.template_code && Object.keys(sessionStatus.template_code).length > 0 && currentStep < 3)) {
+        // If code is generated (even if not waiting for input), navigate to code review
+        setCurrentStep(3);
       }
     }
-  }, [sessionStatus]);
+  }, [sessionStatus, currentStep]);
+  
+  // Scroll chat to bottom when new messages arrive
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages]);
 
   const handleStartSession = async () => {
     try {
@@ -184,7 +205,69 @@ const BuildAgent = () => {
     }
   };
 
+  const handleChatSubmit = async () => {
+    if (!chatInput.trim() || !sessionId) return;
+    
+    const userMessage = chatInput.trim();
+    setChatInput('');
+    setChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setIsGeneratingCode(true);
+    
+    try {
+      // Use the logic generation API to get AI suggestions
+      const toolsForApi = selectedTools.map(tool => ({
+        name: tool.name,
+        type: 'reactive',
+        description: tool.description,
+      }));
+      
+      const result = await api.generateLogic(
+        toolsForApi,
+        `${prompt}\n\nUser request: ${userMessage}`,
+        {
+          user_id: 'default_user',
+          llm_provider: 'openai',
+          near_account: '',
+        }
+      );
+      
+      setChatMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: `Here's the updated code based on your request:\n\n\`\`\`python\n${result.logic_code}\n\`\`\`` 
+      }]);
+      
+      // Update the logic.py file in the editor
+      if (codeEditorFiles.length > 0) {
+        const updatedFiles = codeEditorFiles.map(file => {
+          if (file.name === 'logic.py') {
+            return { ...file, content: result.logic_code };
+          }
+          return file;
+        });
+        setCodeEditorFiles(updatedFiles);
+      }
+      
+      toast.success('Code updated based on your request');
+    } catch (error) {
+      console.error('Failed to generate code:', error);
+      setChatMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: 'Sorry, I encountered an error while generating the code. Please try again.' 
+      }]);
+      toast.error('Failed to generate code', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      });
+    } finally {
+      setIsGeneratingCode(false);
+    }
+  };
+
   const handleFinalize = async () => {
+    if (sessionStatus?.waiting_stage !== 'code_review' && !sessionStatus?.agent_id) {
+      toast.error('Please wait for code generation to complete');
+      return;
+    }
+    
     try {
       await finalizeAgentInWorkflow();
       toast.success('Agent created successfully!', {
@@ -639,9 +722,9 @@ const BuildAgent = () => {
                   <div>
                     <h3 className="text-xl font-bold mb-2">Review Generated Code</h3>
                     <p className="text-sm text-muted-foreground">
-                      {sessionStatus?.waiting_stage === 'code_review'
-                        ? 'Review and edit the generated agent code. Fix any errors before finalizing.'
-                        : 'Review the generated agent code before finalizing.'}
+                      {sessionStatus?.waiting_stage === 'code_review' || sessionStatus?.template_code
+                        ? 'Review and edit the generated agent code. Use the chat to request AI-assisted edits or edit directly in the code editor.'
+                        : 'Waiting for code generation...'}
                     </p>
                   </div>
                 </div>
@@ -663,20 +746,129 @@ const BuildAgent = () => {
                   </div>
                 )}
 
-                <CodeEditor
-                  initialFiles={
-                    sessionStatus?.template_code
-                      ? templateCodeToFileNodes(sessionStatus.template_code)
-                      : []
-                  }
-                  onFilesChange={(files) => {
-                    setCodeEditorFiles(files);
-                  }}
-                  height="600px"
-                />
+                {/* Code Editor and Chat Side by Side */}
+                {sessionStatus?.template_code && Object.keys(sessionStatus.template_code).length > 0 ? (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Code Editor - Takes 2/3 of the space */}
+                    <div className="lg:col-span-2">
+                      <CodeEditor
+                        initialFiles={
+                          codeEditorFiles.length > 0 
+                            ? codeEditorFiles 
+                            : templateCodeToFileNodes(sessionStatus.template_code)
+                        }
+                        onFilesChange={(files) => {
+                          setCodeEditorFiles(files);
+                        }}
+                        height="600px"
+                      />
+                    </div>
+                    
+                    {/* Chat Interface - Takes 1/3 of the space */}
+                    <div className="glass-card flex flex-col" style={{ height: '600px' }}>
+                      <div className="p-4 border-b border-border">
+                        <h4 className="font-bold flex items-center gap-2">
+                          <Bot className="h-4 w-4 text-primary" />
+                          AI Code Assistant
+                        </h4>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Ask me to modify or improve your code
+                        </p>
+                      </div>
+                      
+                      {/* Chat Messages */}
+                      <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                        {chatMessages.length === 0 ? (
+                          <div className="text-center text-muted-foreground text-sm py-8">
+                            <Bot className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                            <p>Start a conversation to edit your code</p>
+                            <p className="text-xs mt-2">Try: "Add error handling" or "Optimize this function"</p>
+                          </div>
+                        ) : (
+                          chatMessages.map((msg, idx) => (
+                            <div
+                              key={idx}
+                              className={cn(
+                                "flex gap-2",
+                                msg.role === 'user' ? 'justify-end' : 'justify-start'
+                              )}
+                            >
+                              {msg.role === 'assistant' && (
+                                <div className="h-6 w-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                                  <Bot className="h-3 w-3 text-primary" />
+                                </div>
+                              )}
+                              <div
+                                className={cn(
+                                  "rounded-lg p-3 max-w-[80%] text-sm",
+                                  msg.role === 'user'
+                                    ? "bg-primary/20 text-primary"
+                                    : "bg-secondary text-foreground"
+                                )}
+                              >
+                                <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                              </div>
+                              {msg.role === 'user' && (
+                                <div className="h-6 w-6 rounded-full bg-accent/20 flex items-center justify-center flex-shrink-0">
+                                  <User className="h-3 w-3 text-accent" />
+                                </div>
+                              )}
+                            </div>
+                          ))
+                        )}
+                        {isGeneratingCode && (
+                          <div className="flex gap-2 justify-start">
+                            <div className="h-6 w-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                              <Bot className="h-3 w-3 text-primary" />
+                            </div>
+                            <div className="bg-secondary rounded-lg p-3">
+                              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                            </div>
+                          </div>
+                        )}
+                        <div ref={chatEndRef} />
+                      </div>
+                      
+                      {/* Chat Input */}
+                      <div className="p-4 border-t border-border">
+                        <div className="flex gap-2">
+                          <Textarea
+                            placeholder="Ask me to modify your code..."
+                            value={chatInput}
+                            onChange={(e) => setChatInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                handleChatSubmit();
+                              }
+                            }}
+                            className="min-h-[60px] resize-none"
+                            disabled={isGeneratingCode || !sessionId}
+                          />
+                          <Button
+                            variant="glow"
+                            onClick={handleChatSubmit}
+                            disabled={isGeneratingCode || !chatInput.trim() || !sessionId}
+                            className="self-end"
+                          >
+                            <Send className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="glass-card p-12 text-center">
+                    <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-primary" />
+                    <p className="text-muted-foreground">Generating code...</p>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      This may take a few moments
+                    </p>
+                  </div>
+                )}
                 
                 {/* Code Update Controls */}
-                {sessionStatus?.waiting_stage === 'code_review' && (
+                {sessionStatus?.waiting_stage === 'code_review' && sessionStatus?.template_code && (
                   <div className="glass-card p-4 flex items-center justify-between">
                     <p className="text-sm text-muted-foreground">
                       Make your edits above, then click "Save Changes" to update the workflow
@@ -695,21 +887,18 @@ const BuildAgent = () => {
                   <Button variant="outline" onClick={() => setCurrentStep(2)}>
                     Back
                   </Button>
-                  {sessionStatus?.waiting_stage === 'code_review' || sessionStatus?.agent_id ? (
+                  {(sessionStatus?.waiting_stage === 'code_review' || 
+                    (sessionStatus?.template_code && Object.keys(sessionStatus.template_code).length > 0)) && 
+                   !sessionStatus?.agent_id ? (
                     <Button
                       variant="glow"
                       onClick={handleFinalize}
-                      disabled={isSessionLoading || !!sessionStatus?.agent_id}
+                      disabled={isSessionLoading}
                     >
                       {isSessionLoading ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                           Finalizing...
-                        </>
-                      ) : sessionStatus?.agent_id ? (
-                        <>
-                          <Rocket className="h-4 w-4 mr-2" />
-                          Agent Created: {sessionStatus.agent_id}
                         </>
                       ) : (
                         <>
@@ -718,8 +907,13 @@ const BuildAgent = () => {
                         </>
                       )}
                     </Button>
+                  ) : sessionStatus?.agent_id ? (
+                    <Button variant="glow" disabled>
+                      <Rocket className="h-4 w-4 mr-2" />
+                      Agent Created: {sessionStatus.agent_id}
+                    </Button>
                   ) : (
-                    <Button variant="glow" onClick={() => setCurrentStep(3)} disabled>
+                    <Button variant="glow" disabled>
                       Waiting for code generation...
                     </Button>
                   )}
