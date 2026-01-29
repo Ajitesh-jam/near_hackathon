@@ -266,6 +266,11 @@ class AgentLogic:
         tools_dir.mkdir(exist_ok=True)
         (tools_dir / "__init__.py").write_text("")
         
+        # Copy base.py first (required dependency for all tools)
+        base_file = Path(__file__).parent.parent / "template" / "tools" / "base.py"
+        if base_file.exists():
+            (tools_dir / "base.py").write_text(base_file.read_text())
+        
         for tool in tools:
             tool_name = tool.get("name", "")
             tool_code = tool.get("code", "")

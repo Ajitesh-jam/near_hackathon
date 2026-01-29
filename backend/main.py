@@ -20,11 +20,21 @@ from utils.schemas import (
     ForgeProcessResponseSchema,
     ToolGenerationRequestSchema,
     LogicGenerationRequestSchema,
+    ForgeSessionStartRequestSchema,
+    ForgeSessionStartResponseSchema,
+    ForgeSessionStatusResponseSchema,
+    ToolSelectionRequestSchema,
+    CustomToolRequestSchema,
+    PromptSubmissionRequestSchema,
+    ClarificationResponseSchema,
+    ToolReviewRequestSchema,
+    CodeUpdateRequestSchema,
 )
 from services.forge_service import ForgeService
 from services.tool_registry import ToolRegistry
 from services.ai_code_service import AICodeService
 from services.agent_service import AgentService
+from services.session_service import SessionService
 
 app = FastAPI()
 
@@ -46,11 +56,12 @@ forge_service = None
 tool_registry = None
 ai_code_service = None
 agent_service = None
+session_service = None
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup after env vars are loaded"""
-    global forge_service, tool_registry, ai_code_service, agent_service
+    global forge_service, tool_registry, ai_code_service, agent_service, session_service
     
     # Check for API key
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -60,6 +71,7 @@ async def startup_event():
     
     tool_registry = ToolRegistry()
     agent_service = AgentService()
+    session_service = SessionService()
     
     # Only initialize AI services if API key is available
     if api_key:
@@ -168,6 +180,188 @@ async def get_agent_code(agent_id: str, user_id: str):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading agent code: {str(e)}")
+
+# HITL Workflow Endpoints
+
+@app.post("/forge/start", response_model=ForgeSessionStartResponseSchema)
+async def start_forge_session(request: ForgeSessionStartRequestSchema):
+    """Initialize new agent building session"""
+    if session_service is None or forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    # Create or get existing session
+    session_id = session_service.create_session(request.user_id)
+    
+    # Start the workflow
+    await forge_service.start_session(session_id, request.user_id)
+    
+    return ForgeSessionStartResponseSchema(
+        session_id=session_id,
+        status="initialized"
+    )
+
+@app.get("/forge/session/{session_id}/status", response_model=ForgeSessionStatusResponseSchema)
+async def get_session_status(session_id: str):
+    """Get current session state"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    state = await forge_service.get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return ForgeSessionStatusResponseSchema(
+        session_id=session_id,
+        waiting_for_input=state.get("waiting_for_input", False),
+        waiting_stage=state.get("waiting_stage", ""),
+        current_step=state.get("current_step", ""),
+        template_code=state.get("template_code"),
+        code_errors=state.get("code_errors"),
+        user_clarifications=state.get("user_clarifications"),
+        tool_changes=state.get("tool_changes"),
+        selected_tools=state.get("selected_tools"),
+        agent_id=state.get("agent_id")
+    )
+
+@app.post("/forge/session/{session_id}/tools")
+async def submit_tools(session_id: str, request: ToolSelectionRequestSchema):
+    """Submit selected tools"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    # Get current state
+    config = {"configurable": {"thread_id": session_id}}
+    current_state = forge_service.graph.get_state(config)
+    if not current_state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Update state with tools
+    state_values = current_state.values.copy()
+    state_values["selected_tools"] = request.tools
+    state_values["waiting_for_input"] = False
+    
+    # Update checkpoint state and resume workflow
+    forge_service.graph.update_state(config, state_values)
+    result = await forge_service.resume_workflow(session_id)
+    return await get_session_status(session_id)
+
+@app.post("/forge/session/{session_id}/custom-tools")
+async def submit_custom_tools(session_id: str, request: CustomToolRequestSchema):
+    """Submit custom tool requirements"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    config = {"configurable": {"thread_id": session_id}}
+    current_state = forge_service.graph.get_state(config)
+    if not current_state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    state_values = current_state.values.copy()
+    state_values["custom_tool_requirements"] = request.requirements
+    state_values["waiting_for_input"] = False
+    
+    forge_service.graph.update_state(config, state_values)
+    result = await forge_service.resume_workflow(session_id)
+    return await get_session_status(session_id)
+
+@app.post("/forge/session/{session_id}/prompt")
+async def submit_prompt(session_id: str, request: PromptSubmissionRequestSchema):
+    """Submit user prompt"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    config = {"configurable": {"thread_id": session_id}}
+    current_state = forge_service.graph.get_state(config)
+    if not current_state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    state_values = current_state.values.copy()
+    state_values["user_message"] = request.prompt
+    state_values["waiting_for_input"] = False
+    
+    forge_service.graph.update_state(config, state_values)
+    result = await forge_service.resume_workflow(session_id)
+    return await get_session_status(session_id)
+
+@app.post("/forge/session/{session_id}/clarification")
+async def submit_clarification(session_id: str, request: ClarificationResponseSchema):
+    """Submit clarification answers"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    config = {"configurable": {"thread_id": session_id}}
+    current_state = forge_service.graph.get_state(config)
+    if not current_state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    state_values = current_state.values.copy()
+    state_values["user_clarifications"] = request.answers
+    state_values["waiting_for_input"] = False
+    
+    forge_service.graph.update_state(config, state_values)
+    result = await forge_service.resume_workflow(session_id)
+    return await get_session_status(session_id)
+
+@app.post("/forge/session/{session_id}/tool-review")
+async def submit_tool_review(session_id: str, request: ToolReviewRequestSchema):
+    """Confirm/reject tool changes"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    config = {"configurable": {"thread_id": session_id}}
+    current_state = forge_service.graph.get_state(config)
+    if not current_state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    state_values = current_state.values.copy()
+    state_values["tool_changes"] = request.changes
+    state_values["waiting_for_input"] = False
+    
+    forge_service.graph.update_state(config, state_values)
+    result = await forge_service.resume_workflow(session_id)
+    return await get_session_status(session_id)
+
+@app.post("/forge/session/{session_id}/code-update")
+async def update_code(session_id: str, request: CodeUpdateRequestSchema):
+    """Submit code edits"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    config = {"configurable": {"thread_id": session_id}}
+    current_state = forge_service.graph.get_state(config)
+    if not current_state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    state_values = current_state.values.copy()
+    # Update template_code
+    if "template_code" not in state_values:
+        state_values["template_code"] = {}
+    state_values["template_code"][request.file_path] = request.content
+    state_values["waiting_for_input"] = False
+    
+    forge_service.graph.update_state(config, state_values)
+    result = await forge_service.resume_workflow(session_id)
+    return await get_session_status(session_id)
+
+@app.post("/forge/session/{session_id}/finalize")
+async def finalize_agent(session_id: str):
+    """Finalize agent creation"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    config = {"configurable": {"thread_id": session_id}}
+    current_state = forge_service.graph.get_state(config)
+    if not current_state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    state_values = current_state.values.copy()
+    state_values["finalize"] = True
+    state_values["waiting_for_input"] = False
+    
+    forge_service.graph.update_state(config, state_values)
+    
+    result = await forge_service.resume_workflow(session_id)
+    return await get_session_status(session_id)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080, reload=True)
