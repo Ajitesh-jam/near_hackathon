@@ -6,5 +6,45 @@
     "config": {},
     "path": "/home/dev/Projects/near_hackathon/backend/Temp/default/agent_1",
     "created_at": "/home/dev/Projects/near_hackathon/backend"
+  },
+  {
+    "agent_id": "agent_1",
+    "user_id": "test_user_e2e",
+    "tools": [
+      {
+        "name": "crypto_price"
+      },
+      {
+        "name": "will_executor"
+      }
+    ],
+    "config": {
+      "user_id": "test_user_e2e",
+      "summary": "\"questions\": ["
+    },
+    "path": "/home/dev/Projects/near_hackathon/backend/Temp/test_user_e2e/agent_1",
+    "created_at": "/home/dev/Projects/near_hackathon/backend"
+  },
+  {
+    "agent_id": "agent_1",
+    "user_id": "default_user",
+    "tools": [
+      {
+        "name": "Crypto Price",
+        "description": "ACTIVE tool: Monitors crypto price continuously",
+        "code": "from .base import Tool, ToolType\nimport asyncio\nfrom typing import Dict, Any\n\nclass CryptoPriceMonitor(Tool):\n    \"\"\"ACTIVE tool: Monitors crypto price continuously\"\"\"\n    \n    def _determine_type(self) -> ToolType:\n        return ToolType.ACTIVE\n    \n    async def check(self) -> Dict[str, Any]:\n        symbol = self.config.get(\"symbol\", \"BTC\")\n        threshold = self.config.get(\"threshold\")\n        \n        # Fetch price (placeholder - would use actual API/oracle)\n        price = await self._fetch_price(symbol)\n        \n        trigger = False\n        if threshold:\n            above_threshold = self.config.get(\"above_threshold\", True)\n            trigger = price >= threshold if above_threshold else price <= threshold\n        \n        return {\n            \"status\": \"ok\",\n            \"data\": {\"symbol\": symbol, \"price\": price},\n            \"trigger\": trigger\n        }\n    \n    async def run_loop(self, callback):\n        self.is_running = True\n        interval = self.config.get(\"interval\", 60)\n        while self.is_running:\n            result = await self.check()\n            if result and result.get(\"trigger\"):\n                await callback(result)\n            await asyncio.sleep(interval)\n    \n    async def _fetch_price(self, symbol: str) -> float:\n        \"\"\"Fetches price from oracle/API\"\"\"\n        # Placeholder implementation\n        # In production, would use NEAR oracle or external API\n        import random\n        return random.uniform(40000, 50000)  # Mock BTC price\n    \n    def _get_config_schema(self) -> Dict[str, Any]:\n        return {\n            \"symbol\": {\"type\": \"string\", \"required\": True, \"default\": \"BTC\"},\n            \"threshold\": {\"type\": \"float\", \"required\": False},\n            \"interval\": {\"type\": \"int\", \"default\": 60},\n            \"above_threshold\": {\"type\": \"bool\", \"default\": True}\n        }\n"
+      },
+      {
+        "name": "Social Checker",
+        "description": "ACTIVE tool: Checks social media login status",
+        "code": "from .base import Tool, ToolType\nimport asyncio\nfrom typing import Dict, Any\nfrom datetime import datetime, timedelta\n\nclass SocialChecker(Tool):\n    \"\"\"ACTIVE tool: Checks social media login status\"\"\"\n    \n    def _determine_type(self) -> ToolType:\n        return ToolType.ACTIVE\n    \n    async def check(self) -> Dict[str, Any]:\n        platform = self.config.get(\"platform\", \"instagram\")\n        username = self.config.get(\"username\")\n        password = self.config.get(\"password\")\n        \n        # Check last login (placeholder - would use actual API)\n        last_login = await self._check_last_login(platform, username, password)\n        monitoring_period_days = self.config.get(\"monitoring_period_days\", 180)\n        cutoff_date = datetime.now() - timedelta(days=monitoring_period_days)\n        \n        trigger = False\n        if last_login and last_login < cutoff_date:\n            trigger = True\n        \n        return {\n            \"status\": \"ok\",\n            \"data\": {\n                \"platform\": platform,\n                \"username\": username,\n                \"last_login\": last_login.isoformat() if last_login else None\n            },\n            \"trigger\": trigger\n        }\n    \n    async def run_loop(self, callback):\n        self.is_running = True\n        interval = self.config.get(\"interval\", 86400)  # Daily check\n        while self.is_running:\n            result = await self.check()\n            if result and result.get(\"trigger\"):\n                await callback(result)\n            await asyncio.sleep(interval)\n    \n    async def _check_last_login(self, platform: str, username: str, password: str) -> datetime:\n        \"\"\"Checks last login time (placeholder)\"\"\"\n        # Placeholder - would use actual social media API\n        # For demo, return a date\n        return datetime.now() - timedelta(days=30)\n    \n    def _get_config_schema(self) -> Dict[str, Any]:\n        return {\n            \"platform\": {\"type\": \"string\", \"required\": True, \"default\": \"instagram\"},\n            \"username\": {\"type\": \"string\", \"required\": True},\n            \"password\": {\"type\": \"string\", \"required\": True},\n            \"monitoring_period_days\": {\"type\": \"int\", \"default\": 180},\n            \"interval\": {\"type\": \"int\", \"default\": 86400}\n        }\n"
+      }
+    ],
+    "config": {
+      "user_id": "default_user",
+      "summary": "\"questions\": ["
+    },
+    "path": "/home/dev/Projects/near_hackathon/backend/Temp/default_user/agent_1",
+    "created_at": "/home/dev/Projects/near_hackathon/backend"
   }
 ]
