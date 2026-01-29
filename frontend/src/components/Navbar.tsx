@@ -8,7 +8,6 @@ import { cn } from '@/lib/utils';
 const navItems = [
   { name: 'Home', path: '/' },
   { name: 'Build Agent', path: '/buildAgent' },
-  { name: 'AI Chat', path: '/AiChat' },
 ];
 
 export const Navbar: React.FC = () => {
