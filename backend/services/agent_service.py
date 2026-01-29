@@ -2,6 +2,7 @@ from typing import List, Dict, Any
 from pathlib import Path
 import json
 import shutil
+import uuid
 from services.ai_code_service import AICodeService
 from services.tool_registry import ToolRegistry
 
@@ -65,6 +66,80 @@ class AgentService:
         agents = self._load_agents()
         return [a for a in agents if a["user_id"] == user_id]
     
+    def get_agent_code(self, user_id: str, agent_id: str) -> Dict[str, Any]:
+        """Returns the complete file structure of an agent as a tree"""
+        agents = self._load_agents()
+        agent = next((a for a in agents if a["user_id"] == user_id and a["agent_id"] == agent_id), None)
+        
+        if not agent:
+            raise ValueError(f"Agent {agent_id} not found for user {user_id}")
+        
+        agent_dir = Path(agent.get("path", ""))
+        if not agent_dir.exists():
+            raise ValueError(f"Agent directory not found: {agent_dir}")
+        
+        def build_file_tree(path: Path) -> List[Dict]:
+            """Recursively build file tree structure"""
+            files = []
+            
+            for item in sorted(path.iterdir()):
+                # Skip hidden files and __pycache__
+                if item.name.startswith('.') or item.name == '__pycache__':
+                    continue
+                
+                item_id = str(uuid.uuid4())
+                node = {
+                    "id": item_id,
+                    "name": item.name,
+                    "type": "folder" if item.is_dir() else "file",
+                }
+                
+                if item.is_file():
+                    # Read file content
+                    try:
+                        content = item.read_text(encoding='utf-8')
+                        node["content"] = content
+                        
+                        # Determine language from extension
+                        ext = item.suffix.lower()
+                        lang_map = {
+                            '.py': 'python',
+                            '.txt': 'plaintext',
+                            '.json': 'json',
+                            '.yaml': 'yaml',
+                            '.yml': 'yaml',
+                            '.toml': 'toml',
+                            '.env': 'plaintext',
+                            '.md': 'markdown',
+                        }
+                        
+                        # Special case for Dockerfile
+                        if item.name.lower() == 'dockerfile':
+                            node["language"] = "dockerfile"
+                        else:
+                            node["language"] = lang_map.get(ext, 'plaintext')
+                    except UnicodeDecodeError:
+                        # Binary file or encoding issue
+                        node["content"] = "# Binary file or encoding issue - cannot display"
+                        node["language"] = "plaintext"
+                    except Exception as e:
+                        node["content"] = f"# Error reading file: {str(e)}"
+                        node["language"] = "plaintext"
+                else:
+                    # It's a directory, recurse
+                    children = build_file_tree(item)
+                    if children:  # Only add folder if it has children
+                        node["children"] = children
+                    else:
+                        continue  # Skip empty directories
+                
+                files.append(node)
+            
+            return files
+        
+        file_tree = build_file_tree(agent_dir)
+        return {"files": file_tree}
+    
     # Template Generation
     def _generate_codebase(self, user_id: str, agent_id: str, tools: List[Dict], logic_code: str, config: Dict) -> Path:
         """Generates complete agent codebase structure"""
@@ -88,10 +163,13 @@ class AgentService:
         
         for tool in tools:
             tool_name = tool.get("name", "").lower()
-            tool_type = tool.get("type", "reactive")
+            # Infer tool type from description or code
+            desc = tool.get("description", "").upper()
+            code = tool.get("code", "").upper()
+            is_active = "ACTIVE" in desc or "ToolType.ACTIVE" in code or "return ToolType.ACTIVE" in code
             class_name = "".join(word.capitalize() for word in tool_name.split("_"))
             
-            if tool_type == "active":
+            if is_active:
                 active_imports.append(f"from tools.{tool_name} import {class_name}")
             else:
                 reactive_imports.append(f"from tools.{tool_name} import {class_name}")

@@ -78,6 +78,7 @@ Return JSON format."""
     def _suggest_tools(self, state: ForgeState) -> ForgeState:
         """Suggests platform tools based on intent"""
         available_tools = self.tool_registry.list_tools()
+        tools_list = available_tools.get("tools", [])
         user_message = state["user_message"].lower()
         
         selected = []
@@ -85,20 +86,20 @@ Return JSON format."""
         # Simple keyword matching (could be improved with LLM)
         if "trade" in user_message or "buy" in user_message or "sell" in user_message:
             # Add trading tools
-            for tool in available_tools.get("reactive", []):
-                if "trade" in tool.get("name", "").lower():
+            for tool in tools_list:
+                tool_name = tool.get("name", "").lower()
+                if "trade" in tool_name:
                     selected.append(tool)
-            for tool in available_tools.get("active", []):
-                if "price" in tool.get("name", "").lower() or "crypto" in tool.get("name", "").lower():
+                elif "price" in tool_name or "crypto" in tool_name:
                     selected.append(tool)
         
         if "will" in user_message or "beneficiary" in user_message:
             # Add will tools
-            for tool in available_tools.get("reactive", []):
-                if "will" in tool.get("name", "").lower():
+            for tool in tools_list:
+                tool_name = tool.get("name", "").lower()
+                if "will" in tool_name:
                     selected.append(tool)
-            for tool in available_tools.get("active", []):
-                if "social" in tool.get("name", "").lower() or "checker" in tool.get("name", "").lower():
+                elif "social" in tool_name or "checker" in tool_name:
                     selected.append(tool)
         
         state["selected_tools"] = selected

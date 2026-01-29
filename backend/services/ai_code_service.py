@@ -91,8 +91,16 @@ class AICodeService:
         """
         Generates logic.py code that connects tools based on user intent.
         """
-        active_tools = [t for t in selected_tools if t.get("type") == "active"]
-        reactive_tools = [t for t in selected_tools if t.get("type") == "reactive"]
+        # Infer tool type from description or code
+        active_tools = []
+        reactive_tools = []
+        for tool in selected_tools:
+            desc = tool.get("description", "").upper()
+            code = tool.get("code", "").upper()
+            if "ACTIVE" in desc or "ToolType.ACTIVE" in code or "return ToolType.ACTIVE" in code:
+                active_tools.append(tool)
+            else:
+                reactive_tools.append(tool)
         
         prompt_template = self.prompts.get("logic_generation", """
         Generate AgentLogic class for a NEAR agent.

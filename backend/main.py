@@ -156,5 +156,18 @@ async def create_agent(request: AgentGenerationRequestSchema) -> AgentGeneration
         path=f"Temp/{request.user_id}/{agent_id}"
     )
 
+@app.get("/agents/{agent_id}/code")
+async def get_agent_code(agent_id: str, user_id: str):
+    """Get the complete code structure for an agent"""
+    if agent_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    try:
+        code_structure = agent_service.get_agent_code(user_id, agent_id)
+        return code_structure
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading agent code: {str(e)}")
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080, reload=True)

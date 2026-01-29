@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Rocket, 
@@ -10,18 +10,21 @@ import {
   ChevronRight,
   Plus,
   Trash2,
-  Wallet
+  Wallet,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Navbar } from '@/components/Navbar';
-import { ToolsSection, Tool, defaultTools } from '@/components/ToolsSection';
+import { ToolsSection, Tool } from '@/components/ToolsSection';
 import { LLMSelector } from '@/components/LLMSelector';
 import { PromptEditor, defaultPrompt } from '@/components/PromptEditor';
 import { CodeEditor, FileNode } from '@/components/CodeEditor';
 import { generateAgentFiles } from '@/lib/agentTemplates';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { api } from '@/lib/api/client';
 
 const steps = [
   { id: 'instructions', label: 'Instructions', icon: FileCode },
@@ -42,26 +45,164 @@ const BuildAgent = () => {
   const [nearAccount, setNearAccount] = useState('');
   const [customTools, setCustomTools] = useState<{ name: string; code: string; requirements: string }[]>([]);
   const [isDeploying, setIsDeploying] = useState(false);
+  const [isGeneratingTool, setIsGeneratingTool] = useState(false);
+  const [toolRequirements, setToolRequirements] = useState('');
+  const [isGeneratingLogic, setIsGeneratingLogic] = useState(false);
+  const [aiGeneratedLogic, setAiGeneratedLogic] = useState<string | null>(null);
+  const [agents, setAgents] = useState<any[]>([]);
+  const [isLoadingAgents, setIsLoadingAgents] = useState(false);
 
   // Generate files based on current configuration
   const generatedFiles = useMemo(() => {
-    return generateAgentFiles(
+    const files = generateAgentFiles(
       selectedTools,
       prompt,
       selectedLLM || 'openai',
       nearAccount,
       customTools
     );
-  }, [selectedTools, prompt, selectedLLM, nearAccount, customTools]);
+    
+    // Replace logic.py with AI-generated logic if available
+    if (aiGeneratedLogic) {
+      const logicFileIndex = files.findIndex(f => f.name === 'logic.py');
+      if (logicFileIndex !== -1) {
+        files[logicFileIndex] = {
+          ...files[logicFileIndex],
+          content: aiGeneratedLogic,
+        };
+      }
+    }
+    
+    return files;
+  }, [selectedTools, prompt, selectedLLM, nearAccount, customTools, aiGeneratedLogic]);
+
+  const handleGenerateLogic = async () => {
+    if (selectedTools.length === 0) {
+      toast.error('Please select at least one tool first');
+      return;
+    }
+
+    setIsGeneratingLogic(true);
+    try {
+      const toolsForApi = [
+        ...selectedTools.map(tool => ({
+          name: tool.name,
+          type: 'reactive', // Default type
+          description: tool.description,
+        })),
+        ...customTools.map(tool => ({
+          name: tool.name,
+          type: 'reactive',
+          description: '',
+        })),
+      ];
+
+      const result = await api.generateLogic(
+        toolsForApi,
+        prompt,
+        {
+          user_id: 'default_user',
+          llm_provider: selectedLLM || 'openai',
+          near_account: nearAccount,
+        }
+      );
+
+      setAiGeneratedLogic(result.logic_code);
+      toast.success('Logic code generated successfully!', {
+        description: 'Review the updated logic.py file',
+      });
+    } catch (error) {
+      console.error('Failed to generate logic:', error);
+      toast.error('Failed to generate logic', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      });
+    } finally {
+      setIsGeneratingLogic(false);
+    }
+  };
 
   const handleDeploy = async () => {
+    if (!nearAccount) {
+      toast.error('Please enter a NEAR account');
+      return;
+    }
+
     setIsDeploying(true);
-    // Simulate deployment
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    setIsDeploying(false);
-    toast.success('Agent deployed successfully!', {
-      description: 'Your Shade Agent is now running on Phala Network.',
-    });
+    try {
+      const toolsForApi = [
+        ...selectedTools.map(tool => ({
+          name: tool.name,
+          type: 'reactive', // Default type - could be enhanced to detect from tool
+          description: tool.description,
+          config_schema: {},
+        })),
+        ...customTools.map(tool => ({
+          name: tool.name,
+          type: 'reactive',
+          description: '',
+          config_schema: {},
+        })),
+      ];
+
+      const result = await api.createAgent(
+        'default_user', // TODO: get from auth context
+        undefined, // auto-generate agent_id
+        toolsForApi,
+        {
+          llm_provider: selectedLLM || 'openai',
+          system_prompt: prompt,
+          near_account: nearAccount,
+        }
+      );
+
+      toast.success('Agent created successfully!', {
+        description: `Code generated at: ${result.path}`,
+      });
+      
+      // Refresh agents list
+      await fetchAgents();
+    } catch (error) {
+      console.error('Failed to create agent:', error);
+      toast.error('Failed to create agent', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      });
+    } finally {
+      setIsDeploying(false);
+    }
+  };
+
+  const fetchAgents = async () => {
+    setIsLoadingAgents(true);
+    try {
+      const result = await api.listAgents('default_user');
+      setAgents(result.agents || []);
+    } catch (error) {
+      console.error('Failed to fetch agents:', error);
+      // Silently fail - agents list is optional
+    } finally {
+      setIsLoadingAgents(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAgents();
+  }, []);
+
+  const handleDeleteAgent = async (agentId: string) => {
+    if (!confirm(`Are you sure you want to delete agent "${agentId}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await api.removeAgent(agentId, 'default_user');
+      toast.success('Agent deleted successfully');
+      await fetchAgents(); // Refresh list
+    } catch (error) {
+      console.error('Failed to delete agent:', error);
+      toast.error('Failed to delete agent', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
   };
 
   const addCustomTool = () => {
@@ -76,6 +217,50 @@ const BuildAgent = () => {
 
   const removeCustomTool = (index: number) => {
     setCustomTools(customTools.filter((_, i) => i !== index));
+  };
+
+  const handleGenerateTool = async () => {
+    if (!toolRequirements.trim()) {
+      toast.error('Please describe what tool you want to generate');
+      return;
+    }
+
+    setIsGeneratingTool(true);
+    try {
+      const existingTools = [
+        ...selectedTools.map(t => ({ name: t.name, type: 'reactive' })),
+        ...customTools.map(t => ({ name: t.name, type: 'reactive' })),
+      ];
+
+      const result = await api.generateTool(toolRequirements, existingTools);
+      
+      if (result.tools && result.tools.length > 0) {
+        const generatedTool = result.tools[0];
+        setCustomTools([
+          ...customTools,
+          {
+            name: generatedTool.name || 'Generated Tool',
+            code: generatedTool.code || `# ${generatedTool.name} tool\n\ndef execute():\n    pass\n`,
+            requirements: '',
+          },
+        ]);
+        setToolRequirements('');
+        toast.success('Tool generated successfully!', {
+          description: `Generated: ${generatedTool.name}`,
+        });
+      } else {
+        toast.error('No tools were generated', {
+          description: 'Please try a different description',
+        });
+      }
+    } catch (error) {
+      console.error('Failed to generate tool:', error);
+      toast.error('Failed to generate tool', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      });
+    } finally {
+      setIsGeneratingTool(false);
+    }
   };
 
   return (
@@ -97,6 +282,50 @@ const BuildAgent = () => {
               Configure and deploy a decentralized AI agent with persistent account control
             </p>
           </motion.div>
+
+          {/* My Agents Section */}
+          {agents.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-8"
+            >
+              <div className="glass-card p-6">
+                <h2 className="text-xl font-bold mb-4">My Agents</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {agents.map((agent) => (
+                    <div
+                      key={agent.agent_id}
+                      className="p-4 bg-secondary/30 rounded-lg border border-border hover:border-primary/50 transition-colors"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="font-bold text-primary">{agent.agent_id}</h3>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">
+                            {agent.tools?.length || 0} tools
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => handleDeleteAgent(agent.agent_id)}
+                          >
+                            <Trash2 className="h-3 w-3 text-destructive" />
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-2 truncate">
+                        {agent.path}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Created: {new Date(agent.created_at || Date.now()).toLocaleDateString()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          )}
 
           {/* Progress Steps */}
           <motion.div
@@ -249,13 +478,53 @@ const BuildAgent = () => {
                     <div>
                       <h3 className="text-xl font-bold">Custom Tools</h3>
                       <p className="text-sm text-muted-foreground">
-                        Add your own tools with custom Python code
+                        Add your own tools with custom Python code or generate with AI
                       </p>
                     </div>
-                    <Button variant="outline" onClick={addCustomTool}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Custom Tool
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button variant="outline" onClick={addCustomTool}>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Custom Tool
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* AI Tool Generator */}
+                  <div className="mb-6 p-4 bg-primary/10 rounded-lg border border-primary/20">
+                    <label className="text-sm font-medium mb-2 block">
+                      Generate Tool with AI
+                    </label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Describe the tool you want to generate (e.g., 'A tool that checks social media sentiment for cryptocurrencies')"
+                        value={toolRequirements}
+                        onChange={(e) => setToolRequirements(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleGenerateTool();
+                          }
+                        }}
+                        className="flex-1"
+                      />
+                      <Button
+                        variant="glow"
+                        onClick={handleGenerateTool}
+                        disabled={isGeneratingTool || !toolRequirements.trim()}
+                      >
+                        {isGeneratingTool ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Generating...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-4 w-4 mr-2" />
+                            Generate
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
 
                   {customTools.map((tool, index) => (
@@ -425,11 +694,30 @@ const BuildAgent = () => {
                 animate={{ opacity: 1, x: 0 }}
                 className="space-y-8"
               >
-                <div>
-                  <h3 className="text-xl font-bold mb-2">Review Generated Code</h3>
-                  <p className="text-sm text-muted-foreground mb-6">
-                    Review and edit the generated agent code before deployment
-                  </p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-xl font-bold mb-2">Review Generated Code</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Review and edit the generated agent code before deployment
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={handleGenerateLogic}
+                    disabled={isGeneratingLogic || selectedTools.length === 0}
+                  >
+                    {isGeneratingLogic ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Generating Logic...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4 mr-2" />
+                        Generate Logic with AI
+                      </>
+                    )}
+                  </Button>
                 </div>
 
                 <CodeEditor

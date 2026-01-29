@@ -10,10 +10,7 @@ class ToolRegistry:
     
     def list_tools(self, user_id: str = None) -> Dict[str, List[Dict]]:
         """Returns all tools: platform + temporary (if user_id provided)"""
-        tools = {
-            "active": [],
-            "reactive": []
-        }
+        tools = []
         
         # Load platform tools
         active_dir = self.platform_tools_dir / "active"
@@ -23,25 +20,31 @@ class ToolRegistry:
         if active_dir.exists():
             for tool_file in active_dir.glob("*.py"):
                 if tool_file.name != "__init__.py" and tool_file.name != "base.py":
-                    tools["active"].append(self._load_tool_metadata(tool_file, "active"))
+                    tools.append(self._load_tool_metadata(tool_file, "active"))
         else:
             # Load from main tools directory, check if ACTIVE
             for tool_file in self.platform_tools_dir.glob("*.py"):
                 if tool_file.name not in ["__init__.py", "base.py"]:
                     tool_type = self._infer_tool_type_from_file(tool_file)
-                    tools[tool_type].append(self._load_tool_metadata(tool_file, tool_type))
+                    tools.append(self._load_tool_metadata(tool_file, tool_type))
         
         if reactive_dir.exists():
             for tool_file in reactive_dir.glob("*.py"):
                 if tool_file.name != "__init__.py" and tool_file.name != "base.py":
-                    tools["reactive"].append(self._load_tool_metadata(tool_file, "reactive"))
+                    tools.append(self._load_tool_metadata(tool_file, "reactive"))
         
         # Add temporary tools if user_id provided
         if user_id and user_id in self.temp_tools:
             for tool in self.temp_tools[user_id]:
-                tools[tool["type"]].append(tool)
+                # Ensure temp tools have the right format
+                temp_tool = {
+                    "name": tool.get("name", ""),
+                    "description": tool.get("description", ""),
+                    "code": tool.get("code", "")
+                }
+                tools.append(temp_tool)
         
-        return tools
+        return {"tools": tools}
     
     def add_temp_tool(self, user_id: str, tool: Dict[str, Any]):
         """Adds temporary AI-generated tool"""
@@ -69,10 +72,8 @@ class ToolRegistry:
         code = tool_file.read_text()
         return {
             "name": tool_file.stem,
-            "type": tool_type,
-            "file": str(tool_file),
             "description": self._extract_docstring(code),
-            "module": f"tools.{tool_file.stem}"
+            "code": code
         }
     
     def _infer_tool_type_from_file(self, tool_file: Path) -> str:

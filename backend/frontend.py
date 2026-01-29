@@ -112,11 +112,16 @@ def main():
         # Get available tools
         tools_data = call_api("/tools/list", "GET", {"user_id": st.session_state.agent_config["user_id"]})
         
+        tools_list = tools_data.get("tools", [])
+        
+        # Separate tools by type based on description
+        active_tools = [t for t in tools_list if "ACTIVE" in t.get("description", "").upper()]
+        reactive_tools = [t for t in tools_list if "REACTIVE" in t.get("description", "").upper()]
+        
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("ACTIVE Tools (Monitoring)")
-            active_tools = tools_data.get("active", [])
             for tool in active_tools:
                 tool_name = tool.get("name", "")
                 tool_desc = tool.get("description", "")
@@ -133,7 +138,6 @@ def main():
         
         with col2:
             st.subheader("REACTIVE Tools (On-Demand)")
-            reactive_tools = tools_data.get("reactive", [])
             for tool in reactive_tools:
                 tool_name = tool.get("name", "")
                 tool_desc = tool.get("description", "")
