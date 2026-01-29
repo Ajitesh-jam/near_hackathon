@@ -110,15 +110,8 @@ class ForgeService:
         # Edges from update_prompt_state
         workflow.add_edge("update_prompt_state", "clarify_intent")
         
-        # Edges from clarify_intent
-        workflow.add_conditional_edges(
-            "clarify_intent",
-            self._needs_clarification,
-            {
-                "yes": "wait_for_clarification",
-                "no": "review_tools"
-            }
-        )
+        # Edges from clarify_intent - always go to clarification (compulsory step)
+        workflow.add_edge("clarify_intent", "wait_for_clarification")
         
         # Edges from wait_for_clarification (HITL - routes to END)
         workflow.add_edge("wait_for_clarification", END)
@@ -126,15 +119,9 @@ class ForgeService:
         # Edges from update_clarification_state
         workflow.add_edge("update_clarification_state", "review_tools")
         
-        # Edges from review_tools
-        workflow.add_edge("review_tools", "wait_for_tool_review")
-        
-        # Edges from wait_for_tool_review (HITL - routes to END)
-        workflow.add_edge("wait_for_tool_review", END)
-        
-        # Edges from update_tool_review_state
+        # Edges from review_tools - automatically apply changes and continue (no HITL)
         workflow.add_conditional_edges(
-            "update_tool_review_state",
+            "review_tools",
             self._has_tool_changes,
             {
                 "yes": "apply_tool_changes",
@@ -244,6 +231,7 @@ if __name__ == "__main__":
     asyncio.run(manager.start())
 '''
         template_code["main.py"] = main_py
+        (agent_dir / "main.py").write_text(main_py)  # Write to disk
         
         # Generate basic logic.py
         logic_py = '''from typing import Dict, Any
@@ -264,10 +252,12 @@ class AgentLogic:
         self.state["last_action"] = {"decision": decision, "result": result}
 '''
         template_code["logic.py"] = logic_py
+        (agent_dir / "logic.py").write_text(logic_py)  # Write to disk
         
         # Generate requirements.txt
         requirements = "asyncio\npython-dotenv\n"
         template_code["requirements.txt"] = requirements
+        (agent_dir / "requirements.txt").write_text(requirements)  # Write to disk
         
         # Generate Dockerfile
         dockerfile = '''FROM python:3.11-slim
@@ -282,9 +272,13 @@ COPY . .
 CMD ["python", "main.py"]
 '''
         template_code["Dockerfile"] = dockerfile
+        (agent_dir / "Dockerfile").write_text(dockerfile)  # Write to disk
         
         # Create tools directory structure
+        tools_dir = agent_dir / "tools"
+        tools_dir.mkdir(exist_ok=True)
         template_code["tools/__init__.py"] = ""
+        (tools_dir / "__init__.py").write_text("")  # Write to disk
         
         state["template_code"] = template_code
         state["current_step"] = "initialized"
@@ -301,6 +295,7 @@ CMD ["python", "main.py"]
         """Updates state with selected tools from user input"""
         # Tools should already be in state["selected_tools"] from endpoint
         state["waiting_for_input"] = False
+        state["waiting_stage"] = ""  # Clear waiting stage
         state["current_step"] = "tools_selected"
         return state
     
@@ -353,6 +348,7 @@ CMD ["python", "main.py"]
     def _update_custom_tools_state(self, state: ForgeState) -> ForgeState:
         """Updates state with custom tool requirements"""
         state["waiting_for_input"] = False
+        state["waiting_stage"] = ""  # Clear waiting stage
         state["current_step"] = "custom_tools_requirements_received"
         return state
     
@@ -393,50 +389,75 @@ CMD ["python", "main.py"]
     def _update_prompt_state(self, state: ForgeState) -> ForgeState:
         """Updates state with user prompt"""
         state["waiting_for_input"] = False
+        state["waiting_stage"] = ""  # Clear waiting stage
         state["current_step"] = "prompt_received"
         return state
     
     def _clarify_intent(self, state: ForgeState) -> ForgeState:
-        """LLM analyzes prompt and asks for clarification if needed"""
+        """LLM analyzes prompt and asks for clarification (compulsory step)"""
         user_message = state.get("user_message", "")
+        selected_tools = [t.get("name", "") for t in state.get("selected_tools", [])]
         
         prompt = f"""Analyze this user request for building an agent:
-{user_message}
+User request: {user_message}
+Selected tools: {selected_tools}
 
-Determine if clarification is needed. If yes, provide 1-3 specific questions.
-Return JSON: {{"needs_clarification": bool, "questions": [str]}}"""
+Based on the user's request and selected tools, provide:
+1. A summary of what the agent will do
+2. Any clarification questions if details are missing
+3. Always include a final confirmation question: "Is everything in order to continue?"
+
+Return JSON: {{"summary": str, "questions": [str], "confirmation": str}}"""
         
         response = self.llm.invoke(prompt)
-        # Parse response (simplified - in production, use proper JSON parsing)
         content = response.content
         
-        # Simple parsing - check if clarification needed
-        needs_clarification = "needs_clarification" in content.lower() and "true" in content.lower()
+        # Extract questions and summary
+        questions = []
+        summary = ""
         
-        if needs_clarification:
-            # Extract questions (simplified)
-            questions = []
-            if "questions" in content.lower():
-                # Try to extract questions from response
-                lines = content.split("\n")
-                for line in lines:
-                    if "?" in line and len(line) > 10:
-                        questions.append(line.strip())
-            
-            if not questions:
-                questions = ["Can you provide more details about your requirements?"]
-            
-            state["user_clarifications"] = [{"question": q, "answer": ""} for q in questions]
-        else:
-            state["user_clarifications"] = []
+        # Try to extract questions
+        if "questions" in content.lower():
+            lines = content.split("\n")
+            for line in lines:
+                if "?" in line and len(line) > 10:
+                    questions.append(line.strip())
+        
+        # Extract summary
+        if "summary" in content.lower():
+            # Try to extract summary
+            lines = content.split("\n")
+            for i, line in enumerate(lines):
+                if "summary" in line.lower() and i + 1 < len(lines):
+                    summary = lines[i + 1].strip()
+                    break
+        
+        # Always add confirmation question
+        confirmation = "Is everything in order to continue?"
+        if confirmation not in " ".join(questions):
+            questions.append(confirmation)
+        
+        # If no questions extracted, add default ones
+        if not questions:
+            questions = [
+                "Can you confirm the beneficiary details for the will?",
+                "What should happen if you become inactive?",
+                confirmation
+            ]
+        
+        # Store summary and questions
+        state["user_clarifications"] = [
+            {"question": q, "answer": ""} for q in questions
+        ]
+        if summary:
+            state["agent_config"]["summary"] = summary
         
         state["current_step"] = "intent_clarified"
         return state
     
     def _needs_clarification(self, state: ForgeState) -> str:
-        """Checks if clarification is needed"""
-        clarifications = state.get("user_clarifications", [])
-        return "yes" if clarifications else "no"
+        """Checks if clarification is needed (always yes now - compulsory step)"""
+        return "yes"
     
     def _wait_for_clarification(self, state: ForgeState) -> ForgeState:
         """Sets HITL flag for clarification"""
@@ -448,6 +469,7 @@ Return JSON: {{"needs_clarification": bool, "questions": [str]}}"""
     def _update_clarification_state(self, state: ForgeState) -> ForgeState:
         """Updates state with clarification answers"""
         state["waiting_for_input"] = False
+        state["waiting_stage"] = ""  # Clear waiting stage
         state["current_step"] = "clarification_received"
         return state
     
@@ -495,6 +517,7 @@ Return JSON: {{"add": [tool_names], "remove": [tool_names], "reason": str}}"""
     def _update_tool_review_state(self, state: ForgeState) -> ForgeState:
         """Updates state with tool review decisions"""
         state["waiting_for_input"] = False
+        state["waiting_stage"] = ""  # Clear waiting stage
         state["current_step"] = "tool_review_completed"
         return state
     
@@ -570,25 +593,44 @@ Return JSON: {{"add": [tool_names], "remove": [tool_names], "reason": str}}"""
     def _update_code_state(self, state: ForgeState) -> ForgeState:
         """Updates state with code edits"""
         state["waiting_for_input"] = False
+        state["waiting_stage"] = ""  # Clear waiting stage
         state["current_step"] = "code_updated"
         return state
     
     def _finalize_agent(self, state: ForgeState) -> ForgeState:
         """Creates final agent codebase"""
+        # Ensure agent_config exists
+        if "agent_config" not in state:
+            state["agent_config"] = {}
+        
+        # Ensure agent_dir_path exists, recreate if missing
+        if "agent_dir_path" not in state or not state["agent_dir_path"]:
+            user_id = state.get("agent_config", {}).get("user_id", "default")
+            session_id = state.get("session_id", "unknown")
+            agent_id = state.get("agent_config", {}).get("agent_id") or f"agent_{session_id[:8]}"
+            agent_dir = self.agent_service.temp_dir / user_id / agent_id
+            agent_dir.mkdir(parents=True, exist_ok=True)
+            state["agent_dir_path"] = str(agent_dir)
+        
         # Write all template_code to files
         agent_dir = Path(state["agent_dir_path"])
-        for file_path, content in state["template_code"].items():
+        template_code = state.get("template_code", {})
+        for file_path, content in template_code.items():
             file_full_path = agent_dir / file_path
             file_full_path.parent.mkdir(parents=True, exist_ok=True)
             file_full_path.write_text(content)
         
         # Create agent using agent service
-        all_tools = state["selected_tools"] + state.get("generated_tools", [])
+        all_tools = state.get("selected_tools", []) + state.get("generated_tools", [])
+        # Get logic_code from state or template_code
+        logic_code = state.get("logic_code") or template_code.get("logic.py", "")
+        user_id = state.get("agent_config", {}).get("user_id", "default")
+        agent_config = state.get("agent_config", {})
         agent_id = self.agent_service.create_agent(
-            user_id=state["agent_config"]["user_id"],
+            user_id=user_id,
             tools=all_tools,
-            logic_code=state["logic_code"],
-            config=state["agent_config"]
+            logic_code=logic_code,
+            config=agent_config
         )
         state["agent_id"] = agent_id
         state["current_step"] = "finalized"
@@ -665,14 +707,47 @@ Return JSON: {{"add": [tool_names], "remove": [tool_names], "reason": str}}"""
         return {}
     
     async def resume_workflow(self, session_id: str) -> Dict[str, Any]:
-        """Resumes workflow from checkpoint"""
+        """Resumes workflow from checkpoint by routing to the appropriate update node if needed"""
         config = {"configurable": {"thread_id": session_id}}
         
-        # Stream until next HITL pause or completion
+        # Get current state to determine if we need to route to an update node
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            raise ValueError(f"Session {session_id} not found")
+        
+        waiting_stage = current_state.values.get("waiting_stage")
+        state_values = current_state.values.copy()
+        
+        # Map waiting_stage to the corresponding update node function
+        # Only invoke if we're at END and waiting_for_input was just set to False
+        update_node_map = {
+            "tools": self._update_tools_state,
+            "custom_tools": self._update_custom_tools_state,
+            "prompt": self._update_prompt_state,
+            "clarification": self._update_clarification_state,
+            "tool_review": self._update_tool_review_state,
+            "code_review": self._update_code_state,
+        }
+        
+        # If we have a waiting_stage but waiting_for_input is False, we need to invoke the update node
+        if waiting_stage in update_node_map and not state_values.get("waiting_for_input", True):
+            # Manually invoke the update node since we're at END
+            node_func = update_node_map[waiting_stage]
+            updated_state = node_func(state_values)
+            
+            # Update the checkpoint with the new state
+            self.graph.update_state(config, updated_state)
+        
+        # Now stream from the updated checkpoint
         async for event in self.graph.astream(None, config=config):
             # Check if we've reached a HITL node or completed
             if isinstance(event, dict):
-                if event.get("waiting_for_input"):
-                    break
+                # Check each node's output
+                for node_name, node_state in event.items():
+                    if isinstance(node_state, dict) and node_state.get("waiting_for_input"):
+                        break
+            # Also check if workflow completed (empty event)
+            if not event:
+                break
         
         return await self.get_state(session_id)

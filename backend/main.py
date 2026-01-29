@@ -21,7 +21,6 @@ from utils.schemas import (
     ToolGenerationRequestSchema,
     LogicGenerationRequestSchema,
     ForgeSessionStartRequestSchema,
-    ForgeSessionStartResponseSchema,
     ForgeSessionStatusResponseSchema,
     ToolSelectionRequestSchema,
     CustomToolRequestSchema,
@@ -183,7 +182,7 @@ async def get_agent_code(agent_id: str, user_id: str):
 
 # HITL Workflow Endpoints
 
-@app.post("/forge/start", response_model=ForgeSessionStartResponseSchema)
+@app.post("/forge/start", response_model=ForgeSessionStatusResponseSchema)
 async def start_forge_session(request: ForgeSessionStartRequestSchema):
     """Initialize new agent building session"""
     if session_service is None or forge_service is None:
@@ -195,9 +194,22 @@ async def start_forge_session(request: ForgeSessionStartRequestSchema):
     # Start the workflow
     await forge_service.start_session(session_id, request.user_id)
     
-    return ForgeSessionStartResponseSchema(
+    # Get the complete state and return it
+    state = await forge_service.get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return ForgeSessionStatusResponseSchema(
         session_id=session_id,
-        status="initialized"
+        waiting_for_input=state.get("waiting_for_input", False),
+        waiting_stage=state.get("waiting_stage", ""),
+        current_step=state.get("current_step", ""),
+        template_code=state.get("template_code"),
+        code_errors=state.get("code_errors"),
+        user_clarifications=state.get("user_clarifications"),
+        tool_changes=state.get("tool_changes"),
+        selected_tools=state.get("selected_tools"),
+        agent_id=state.get("agent_id")
     )
 
 @app.get("/forge/session/{session_id}/status", response_model=ForgeSessionStatusResponseSchema)
@@ -240,9 +252,21 @@ async def submit_tools(session_id: str, request: ToolSelectionRequestSchema):
     state_values["selected_tools"] = request.tools
     state_values["waiting_for_input"] = False
     
-    # Update checkpoint state and resume workflow
-    forge_service.graph.update_state(config, state_values)
-    result = await forge_service.resume_workflow(session_id)
+    # Manually invoke the chain: update_tools_state → add_platform_tools → check custom tools → wait_for_prompt
+    updated_state = forge_service._update_tools_state(state_values)
+    updated_state = forge_service._add_platform_tools(updated_state)
+    
+    # Check if we need custom tools
+    if forge_service._should_wait_for_custom_tools(updated_state) == "no":
+        # Skip custom tools, go directly to prompt
+        updated_state = forge_service._wait_for_prompt(updated_state)
+    else:
+        # Need custom tools
+        updated_state = forge_service._wait_for_custom_tools(updated_state)
+    
+    # Update checkpoint
+    forge_service.graph.update_state(config, updated_state)
+    
     return await get_session_status(session_id)
 
 @app.post("/forge/session/{session_id}/custom-tools")
@@ -260,7 +284,12 @@ async def submit_custom_tools(session_id: str, request: CustomToolRequestSchema)
     state_values["custom_tool_requirements"] = request.requirements
     state_values["waiting_for_input"] = False
     
-    forge_service.graph.update_state(config, state_values)
+    # Manually invoke update_custom_tools_state since we're at END
+    updated_state = forge_service._update_custom_tools_state(state_values)
+    
+    # Update checkpoint
+    forge_service.graph.update_state(config, updated_state)
+    
     result = await forge_service.resume_workflow(session_id)
     return await get_session_status(session_id)
 
@@ -279,8 +308,14 @@ async def submit_prompt(session_id: str, request: PromptSubmissionRequestSchema)
     state_values["user_message"] = request.prompt
     state_values["waiting_for_input"] = False
     
-    forge_service.graph.update_state(config, state_values)
-    result = await forge_service.resume_workflow(session_id)
+    # Manually invoke the chain: update_prompt_state → clarify_intent → wait_for_clarification
+    updated_state = forge_service._update_prompt_state(state_values)
+    updated_state = forge_service._clarify_intent(updated_state)
+    updated_state = forge_service._wait_for_clarification(updated_state)
+    
+    # Update checkpoint
+    forge_service.graph.update_state(config, updated_state)
+    
     return await get_session_status(session_id)
 
 @app.post("/forge/session/{session_id}/clarification")
@@ -298,8 +333,31 @@ async def submit_clarification(session_id: str, request: ClarificationResponseSc
     state_values["user_clarifications"] = request.answers
     state_values["waiting_for_input"] = False
     
-    forge_service.graph.update_state(config, state_values)
-    result = await forge_service.resume_workflow(session_id)
+    # Manually invoke the chain: update_clarification_state → review_tools → apply changes → generate_logic → validate_code → wait_for_code_review/finalize
+    updated_state = forge_service._update_clarification_state(state_values)
+    
+    # Continue automatically: review_tools → apply changes → generate_logic → validate_code
+    updated_state = forge_service._review_tools(updated_state)
+    
+    # Apply tool changes if needed
+    if forge_service._has_tool_changes(updated_state) == "yes":
+        updated_state = forge_service._apply_tool_changes(updated_state)
+    
+    # Generate logic
+    updated_state = forge_service._generate_logic(updated_state)
+    
+    # Validate code
+    updated_state = forge_service._validate_code(updated_state)
+    
+    # Check if there are errors - if yes, wait for code review, if no, finalize
+    if forge_service._has_code_errors(updated_state) == "yes":
+        updated_state = forge_service._wait_for_code_review(updated_state)
+    else:
+        updated_state = forge_service._finalize_agent(updated_state)
+    
+    # Update checkpoint
+    forge_service.graph.update_state(config, updated_state)
+    
     return await get_session_status(session_id)
 
 @app.post("/forge/session/{session_id}/tool-review")
@@ -317,7 +375,12 @@ async def submit_tool_review(session_id: str, request: ToolReviewRequestSchema):
     state_values["tool_changes"] = request.changes
     state_values["waiting_for_input"] = False
     
-    forge_service.graph.update_state(config, state_values)
+    # Manually invoke update_tool_review_state since we're at END
+    updated_state = forge_service._update_tool_review_state(state_values)
+    
+    # Update checkpoint
+    forge_service.graph.update_state(config, updated_state)
+    
     result = await forge_service.resume_workflow(session_id)
     return await get_session_status(session_id)
 
@@ -339,7 +402,12 @@ async def update_code(session_id: str, request: CodeUpdateRequestSchema):
     state_values["template_code"][request.file_path] = request.content
     state_values["waiting_for_input"] = False
     
-    forge_service.graph.update_state(config, state_values)
+    # Manually invoke update_code_state since we're at END
+    updated_state = forge_service._update_code_state(state_values)
+    
+    # Update checkpoint
+    forge_service.graph.update_state(config, updated_state)
+    
     result = await forge_service.resume_workflow(session_id)
     return await get_session_status(session_id)
 
@@ -358,9 +426,12 @@ async def finalize_agent(session_id: str):
     state_values["finalize"] = True
     state_values["waiting_for_input"] = False
     
-    forge_service.graph.update_state(config, state_values)
+    # Manually invoke finalize_agent since we're at END
+    updated_state = forge_service._finalize_agent(state_values)
     
-    result = await forge_service.resume_workflow(session_id)
+    # Update checkpoint
+    forge_service.graph.update_state(config, updated_state)
+    
     return await get_session_status(session_id)
 
 if __name__ == "__main__":
