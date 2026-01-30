@@ -1,13 +1,14 @@
-import React from 'react';
-import { motion } from 'framer-motion';
-import { Link } from 'react-router-dom';
-import { Cpu, Menu, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import React from "react";
+import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
+import { Cpu, Menu, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 const navItems = [
-  { name: 'Home', path: '/' },
-  { name: 'Build Agent', path: '/buildAgent' },
+  { name: "Home", path: "/" },
+  { name: "Build Agent", path: "/buildAgent" },
 ];
 
 export const Navbar: React.FC = () => {
@@ -35,7 +36,10 @@ export const Navbar: React.FC = () => {
           <div className="hidden md:flex items-center gap-2">
             {navItems.map((item) => (
               <Link key={item.path} to={item.path}>
-                <Button variant="ghost" className="text-foreground/80 hover:text-primary">
+                <Button
+                  variant="ghost"
+                  className="text-foreground/80 hover:text-primary"
+                >
                   {item.name}
                 </Button>
               </Link>
@@ -45,6 +49,8 @@ export const Navbar: React.FC = () => {
                 Launch Agent
               </Button>
             </Link>
+
+            <ConnectButton />
           </div>
 
           {/* Mobile Menu Button */}
@@ -61,12 +67,16 @@ export const Navbar: React.FC = () => {
         {/* Mobile Navigation */}
         <motion.div
           initial={false}
-          animate={{ height: isOpen ? 'auto' : 0 }}
+          animate={{ height: isOpen ? "auto" : 0 }}
           className="md:hidden overflow-hidden"
         >
           <div className="py-4 space-y-2">
             {navItems.map((item) => (
-              <Link key={item.path} to={item.path} onClick={() => setIsOpen(false)}>
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={() => setIsOpen(false)}
+              >
                 <Button variant="ghost" className="w-full justify-start">
                   {item.name}
                 </Button>
