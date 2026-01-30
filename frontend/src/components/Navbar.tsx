@@ -5,6 +5,7 @@ import { Cpu, Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { WalletButton } from "./NEAR/NEARWalletButton";
 
 const navItems = [
   { name: "Home", path: "/" },
@@ -51,6 +52,7 @@ export const Navbar: React.FC = () => {
             </Link>
 
             <ConnectButton />
+            <WalletButton />
           </div>
 
           {/* Mobile Menu Button */}
