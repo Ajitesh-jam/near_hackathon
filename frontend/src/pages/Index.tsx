@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Sparkles, Zap, Shield, Globe, Bot, Code2 } from 'lucide-react';
+import { ArrowRight, Sparkles, Zap, Shield, Globe, Code2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Navbar } from '@/components/Navbar';
 import { FeatureCarousel } from '@/components/FeatureCarousel';
@@ -81,12 +81,6 @@ const Index = () => {
                 <Button variant="glow" size="xl" className="group">
                   Make Your Own Agent
                   <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
-                </Button>
-              </Link>
-              <Link to="/AiChat">
-                <Button variant="outline" size="xl">
-                  <Bot className="mr-2 h-5 w-5" />
-                  AI Agent Builder
                 </Button>
               </Link>
             </motion.div>

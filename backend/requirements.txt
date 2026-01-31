@@ -6,3 +6,6 @@ uvicorn
 fastapi
 pydantic
 requests
+streamlit
+langgraph
+langgraph-checkpoint

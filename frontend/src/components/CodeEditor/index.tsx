@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { FileExplorer, FileNode } from './FileExplorer';
 import { EditorPanel } from './EditorPanel';
@@ -86,6 +86,24 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [explorerWidth, setExplorerWidth] = useState(250);
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // Update files when initialFiles prop changes (but only if files are empty to avoid overwriting user edits)
+  useEffect(() => {
+    if (initialFiles.length > 0) {
+      // Only update if we don't have files yet, or if the initialFiles has different content
+      if (files.length === 0) {
+        setFiles(initialFiles);
+      } else {
+        // Check if initialFiles has new content (compare by file count and names)
+        const initialFileNames = initialFiles.map(f => f.name).sort().join(',');
+        const currentFileNames = files.map(f => f.name).sort().join(',');
+        if (initialFileNames !== currentFileNames) {
+          // New files detected, update
+          setFiles(initialFiles);
+        }
+      }
+    }
+  }, [initialFiles, files.length]);
 
   const selectedFile = selectedFileId ? findFileById(files, selectedFileId) : null;
 

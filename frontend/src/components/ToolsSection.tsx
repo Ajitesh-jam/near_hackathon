@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   RefreshCw, 
@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { api } from '@/lib/api/client';
+import { toast } from 'sonner';
 
 interface Tool {
   id: string;
@@ -291,14 +293,61 @@ export const ToolsSection: React.FC<ToolsSectionProps> = ({
   selectedTools,
   onToolsChange,
 }) => {
-  const [tools, setTools] = useState<Tool[]>(defaultTools);
+  const [tools, setTools] = useState<Tool[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Transform API tool format to component Tool format
+  const transformApiTool = (apiTool: any): Tool => {
+    // Convert snake_case name to Title Case (e.g., "will_executor" -> "Will Executor")
+    const formattedName = apiTool.name
+      .split('_')
+      .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+    
+    // Extract tool type from description - highlight REACTIVE tools
+    const descriptionUpper = (apiTool.description || '').toUpperCase();
+    const isHighlighted = descriptionUpper.includes('REACTIVE');
+    
+    return {
+      id: apiTool.name.toLowerCase().replace(/\s+/g, '_'),
+      name: formattedName,
+      description: apiTool.description || '',
+      code: apiTool.code || `# ${apiTool.name} tool implementation\n\ndef execute():\n    pass\n`,
+      isHighlighted: isHighlighted,
+    };
+  };
+
+  const fetchTools = async (userId?: string) => {
+    try {
+      const response = await api.listTools(userId);
+      const apiTools: Tool[] = (response.tools || []).map(tool => transformApiTool(tool));
+      
+      // Use only API tools from backend
+      setTools(apiTools);
+    } catch (error) {
+      console.error('Failed to fetch tools:', error);
+      // Fallback to empty array if API fails (don't show default tools)
+      setTools([]);
+      if (isRefreshing) {
+        toast.error('Failed to refresh tools', {
+          description: error instanceof Error ? error.message : 'Unknown error',
+        });
+      } else {
+        // Only show error on initial load if it's critical
+        toast.error('Failed to load tools from backend', {
+          description: 'Please ensure the backend is running',
+        });
+      }
+    }
+  };
+
+  useEffect(() => {
+    fetchTools('default_user');
+  }, []);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setTools([...defaultTools]);
+    await fetchTools('default_user');
     setIsRefreshing(false);
   };
 
