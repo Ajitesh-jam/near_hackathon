@@ -123,10 +123,10 @@ const AiChat = () => {
         role: 'assistant',
         content: `Great! I'll help you build a Shade Agent. Let me analyze your requirements and generate the code...
 
-🔍 Analyzing requirements...
-✅ Selected tools: Web Search, Database Query, Blockchain Transaction
-✅ Recommended LLM: GPT-4 for complex reasoning
-✅ Generating custom prompt based on your needs...
+ Analyzing requirements...
+ Selected tools: Web Search, Database Query, Blockchain Transaction
+ Recommended LLM: GPT-4 for complex reasoning
+ Generating custom prompt based on your needs...
 
 I'm now editing the code files:`,
         isEditing: true,
@@ -156,7 +156,7 @@ I'm now editing the code files:`,
           ? {
               ...m,
               isEditing: false,
-              content: m.content + `\n\n✨ **Code generation complete!**\n\nI've created a full Shade Agent with:\n- 3 powerful tools (Web Search, Database, Blockchain)\n- GPT-4 integration\n- Custom system prompt\n- Full deployment configuration\n\nYou can review and edit the code below. Would you like me to modify anything?`
+              content: m.content + `\n\n**Code generation complete!**\n\nI've created a full Shade Agent with:\n- 3 powerful tools (Web Search, Database, Blockchain)\n- GPT-4 integration\n- Custom system prompt\n- Full deployment configuration\n\nYou can review and edit the code below. Would you like me to modify anything?`
             }
           : m
       ));
@@ -181,7 +181,7 @@ I'm now editing the code files:`,
           ? {
               ...m,
               isEditing: false,
-              content: m.content + `\n\n✅ Changes applied! The code has been updated according to your requirements. Check the editor below to review the changes.`
+              content: m.content + `\n\nChanges applied! The code has been updated according to your requirements. Check the editor below to review the changes.`
             }
           : m
       ));

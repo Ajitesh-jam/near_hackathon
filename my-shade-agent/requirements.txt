@@ -1,0 +1,14 @@
+# Agent service: LangChain + Gemini
+langchain>=0.3.0
+langchain-google-genai>=2.0.0
+langchain-core>=0.3.0
+
+# Shade Agent Python SDK (for account, balance, request_signature, agent_call)
+shade-agent-py>=0.1.0
+
+# Standalone contract view (NEAR RPC) when CONTRACT_ID set
+httpx>=0.28.0
+
+# App
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
