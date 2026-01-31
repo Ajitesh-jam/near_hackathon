@@ -4,7 +4,13 @@ import json
 import shutil
 import uuid
 from services.ai_code_service import AICodeService
-from services.tool_registry import ToolRegistry
+from utils.tool_registry import ToolRegistry
+from template.agent_templates import (
+    get_main_py_content,
+    LOGIC_PY_DEFAULT,
+    DOCKERFILE,
+    REQUIREMENTS_TXT,
+)
 
 class AgentService:
     """
@@ -88,7 +94,7 @@ class AgentService:
                     continue
                 
                 item_id = str(uuid.uuid4())
-                node = {
+                node: Dict[str, Any] = {
                     "id": item_id,
                     "name": item.name,
                     "type": "folder" if item.is_dir() else "file",
@@ -174,90 +180,13 @@ class AgentService:
             else:
                 reactive_imports.append(f"from tools.{tool_name} import {class_name}")
         
-        main_py_content = f'''import asyncio
-import os
-from typing import Dict, List, Any
-{chr(10).join(active_imports) if active_imports else ""}
-{chr(10).join(reactive_imports) if reactive_imports else ""}
-from logic import AgentLogic
-
-class AgentManager:
-    def __init__(self):
-        self.config = self._load_config()
-        self.active_tools = self._init_active_tools()
-        self.reactive_tools = self._init_reactive_tools()
-        self.logic = AgentLogic(
-            active_tools=self.active_tools,
-            reactive_tools=self.reactive_tools
-        )
-        self.active_tasks: List[asyncio.Task] = []
-    
-    def _load_config(self) -> Dict[str, Any]:
-        return {{
-            "user_id": os.getenv("USER_ID", ""),
-            "agent_id": os.getenv("AGENT_ID", ""),
-            "selected_tools": {tools}
-        }}
-    
-    def _init_active_tools(self) -> Dict[str, Any]:
-        tools = {{}}
-        # Initialize selected active tools
-        return tools
-    
-    def _init_reactive_tools(self) -> Dict[str, Any]:
-        tools = {{}}
-        # Initialize selected reactive tools
-        return tools
-    
-    async def _handle_active_trigger(self, tool_name: str, result: Dict[str, Any]):
-        decision = await self.logic.on_trigger(tool_name, result)
-        if decision.get("action") == "execute":
-            reactive_tool = self.reactive_tools[decision["tool"]]
-            reactive_result = reactive_tool.execute(**decision["params"])
-            await self.logic.on_execution(decision, reactive_result)
-    
-    async def start(self):
-        print(f"Starting Agent")
-        for tool_name, tool in self.active_tools.items():
-            task = asyncio.create_task(
-                tool.run_loop(
-                    callback=lambda result, name=tool_name: self._handle_active_trigger(name, result)
-                )
-            )
-            self.active_tasks.append(task)
-        await asyncio.gather(*self.active_tasks)
-    
-    async def stop(self):
-        for tool in self.active_tools.values():
-            tool.is_running = False
-
-if __name__ == "__main__":
-    manager = AgentManager()
-    asyncio.run(manager.start())
-'''
+        main_py_content = get_main_py_content(active_imports, reactive_imports, tools)
         (agent_dir / "main.py").write_text(main_py_content)
     
     def _generate_logic_py(self, agent_dir: Path, logic_code: str):
         """Writes AI-generated logic.py"""
         if not logic_code.strip():
-            # Default logic if AI didn't generate
-            logic_code = '''from typing import Dict, Any
-import asyncio
-
-class AgentLogic:
-    def __init__(self, active_tools: Dict, reactive_tools: Dict):
-        self.active_tools = active_tools
-        self.reactive_tools = reactive_tools
-        self.state = {}
-    
-    async def on_trigger(self, tool_name: str, result: Dict[str, Any]) -> Dict[str, Any]:
-        """Called when an ACTIVE tool triggers"""
-        return {"action": "wait"}
-    
-    async def on_execution(self, decision: Dict, result: Dict):
-        """Called after reactive tool executes"""
-        self.state["last_action"] = {"decision": decision, "result": result}
-'''
+            logic_code = LOGIC_PY_DEFAULT
         (agent_dir / "logic.py").write_text(logic_code)
     
     def _copy_tools(self, agent_dir: Path, tools: List[Dict]):
@@ -288,26 +217,11 @@ class AgentLogic:
     
     def _generate_requirements(self, agent_dir: Path):
         """Generates requirements.txt"""
-        requirements = [
-            "asyncio",
-            "python-dotenv",
-        ]
-        (agent_dir / "requirements.txt").write_text("\n".join(requirements))
+        (agent_dir / "requirements.txt").write_text(REQUIREMENTS_TXT)
     
     def _generate_dockerfile(self, agent_dir: Path):
         """Generates Dockerfile"""
-        dockerfile_content = '''FROM python:3.11-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["python", "main.py"]
-'''
-        (agent_dir / "Dockerfile").write_text(dockerfile_content)
+        (agent_dir / "Dockerfile").write_text(DOCKERFILE)
     
     def _generate_env_example(self, agent_dir: Path, tools: List[Dict], config: Dict):
         """Generates .env.example"""

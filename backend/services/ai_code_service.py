@@ -1,13 +1,9 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
-from template.tools.base import Tool, ToolType
+from langchain_google_genai import ChatGoogleGenerativeAI   
 from dotenv import load_dotenv
 import os
 import ast
-import json
-from pathlib import Path
 from typing import List, Dict, Any
-
-# Load environment variables
+from utils.prompts import TOOL_GENERATION, LOGIC_GENERATION
 load_dotenv()
 
 class AICodeService:
@@ -21,21 +17,6 @@ class AICodeService:
         if not api_key:
             raise ValueError("GOOGLE_API_KEY or GEMINI_API_KEY environment variable is required")
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
-        self.prompts_file = Path(__file__).parent.parent / "template" / "prompts.json"
-        self._load_prompts()
-    
-    def _load_prompts(self):
-        """Loads prompts from template/prompts.json"""
-        if self.prompts_file.exists():
-            with open(self.prompts_file) as f:
-                prompts_data = json.load(f)
-                # Handle both list and dict formats
-                if isinstance(prompts_data, list):
-                    self.prompts = {item.get("name", "default"): item for item in prompts_data}
-                else:
-                    self.prompts = prompts_data
-        else:
-            self.prompts = {}
     
     def _clean_code_blocks(self, code: str) -> str:
         """Removes markdown code block markers from generated code"""
@@ -59,29 +40,15 @@ class AICodeService:
         Generates custom tool code based on user requirements.
         Tools are stored temporarily in Temp/{user_id}/tools/
         """
-        prompt_template = self.prompts.get("tool_generation", """
-        User requirements: {requirements}
-        Existing tools: {existing_tools}
-        
-        Generate Python tool class(es) following this pattern:
-        1. Inherit from Tool base class
-        2. Implement _determine_type() returning ToolType.ACTIVE or ToolType.REACTIVE
-        3. For ACTIVE: implement check() and run_loop()
-        4. For REACTIVE: implement execute()
-        5. Implement _get_config_schema()
-        
-        Return ONLY valid Python code, no explanations.
-        """)
-        
-        prompt = prompt_template.format(
+        prompt = TOOL_GENERATION.format(
             requirements=requirements,
-            existing_tools=[t.get('name', '') for t in existing_tools]
+            existing_tools=[t.get("name", "") for t in existing_tools],
         )
         
         response = self.llm.invoke(prompt)
         tool_code = response.content
         # Clean markdown code blocks
-        tool_code = self._clean_code_blocks(tool_code)
+        tool_code = self._clean_code_blocks(str(tool_code))
         
         # Parse and validate generated code
         tools = self._parse_tool_code(tool_code)
@@ -102,31 +69,15 @@ class AICodeService:
             else:
                 reactive_tools.append(tool)
         
-        prompt_template = self.prompts.get("logic_generation", """
-        Generate AgentLogic class for a NEAR agent.
-        
-        User Intent: {user_intent}
-        Active Tools: {active_tools}
-        Reactive Tools: {reactive_tools}
-        
-        The logic should:
-        1. Handle triggers from ACTIVE tools in on_trigger()
-        2. Execute REACTIVE tools based on conditions
-        3. Manage state between tool calls
-        4. Implement user's specific requirements
-        
-        Return complete Python code for AgentLogic class.
-        """)
-        
-        prompt = prompt_template.format(
+        prompt = LOGIC_GENERATION.format(
             user_intent=user_intent,
-            active_tools=[t.get('name', '') for t in active_tools],
-            reactive_tools=[t.get('name', '') for t in reactive_tools]
+            active_tools=[t.get("name", "") for t in active_tools],
+            reactive_tools=[t.get("name", "") for t in reactive_tools],
         )
         
         response = self.llm.invoke(prompt)
         # Clean markdown code blocks
-        logic_code = self._clean_code_blocks(response.content)
+        logic_code = self._clean_code_blocks(str(response.content))
         return logic_code
     
     def _parse_tool_code(self, code: str) -> List[Dict[str, Any]]:

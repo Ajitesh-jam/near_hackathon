@@ -2,36 +2,27 @@ from pathlib import Path
 from typing import List, Dict, Any
 import ast
 import importlib.util
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ToolRegistry:
     def __init__(self):
-        self.platform_tools_dir = Path(__file__).parent.parent / "template" / "tools"
+        self.platform_tools_dir = Path(__file__).parent / "tools"
         self.temp_tools: Dict[str, List[Dict]] = {}  # Temporary AI-generated tools
     
-    def list_tools(self, user_id: str = None) -> Dict[str, List[Dict]]:
+    def list_tools(self, user_id: str = "") -> Dict[str, List[Dict]]:
         """Returns all tools: platform + temporary (if user_id provided)"""
         tools = []
         
-        # Load platform tools
-        active_dir = self.platform_tools_dir / "active"
-        reactive_dir = self.platform_tools_dir / "reactive"
-        
-        # Check if active/reactive directories exist, otherwise load from tools directory
-        if active_dir.exists():
-            for tool_file in active_dir.glob("*.py"):
-                if tool_file.name != "__init__.py" and tool_file.name != "base.py":
-                    tools.append(self._load_tool_metadata(tool_file, "active"))
-        else:
-            # Load from main tools directory, check if ACTIVE
+        # Load all platform tools from utils/tools directory
+        if self.platform_tools_dir.exists():
             for tool_file in self.platform_tools_dir.glob("*.py"):
                 if tool_file.name not in ["__init__.py", "base.py"]:
                     tool_type = self._infer_tool_type_from_file(tool_file)
                     tools.append(self._load_tool_metadata(tool_file, tool_type))
-        
-        if reactive_dir.exists():
-            for tool_file in reactive_dir.glob("*.py"):
-                if tool_file.name != "__init__.py" and tool_file.name != "base.py":
-                    tools.append(self._load_tool_metadata(tool_file, "reactive"))
+        else:
+            logger.warning(f"Platform tools directory not found: {self.platform_tools_dir}")
         
         # Add temporary tools if user_id provided
         if user_id and user_id in self.temp_tools:
@@ -52,7 +43,7 @@ class ToolRegistry:
             self.temp_tools[user_id] = []
         self.temp_tools[user_id].append(tool)
     
-    def get_tool_code(self, tool_name: str, tool_type: str = None) -> str:
+    def get_tool_code(self, tool_name: str, tool_type: str = "") -> str:
         """Returns the Python code for a tool"""
         # Search in platform tools
         for tool_file in self.platform_tools_dir.rglob("*.py"):
@@ -93,7 +84,7 @@ class ToolRegistry:
                         if isinstance(node.body[0].value, ast.Str):
                             return node.body[0].value.s
                         elif isinstance(node.body[0].value, ast.Constant):
-                            return node.body[0].value.value
+                            return str(node.body[0].value.value)
         except:
             pass
         return ""

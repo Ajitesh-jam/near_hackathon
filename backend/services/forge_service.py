@@ -1,17 +1,29 @@
 from langgraph.graph import StateGraph, END
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
-from typing import TypedDict, List, Dict, Any, Optional
+from typing import TypedDict, List, Dict, Any, Optional, cast
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 import os
 from pathlib import Path
-from services.tool_registry import ToolRegistry
+from utils.tool_registry import ToolRegistry
 from services.ai_code_service import AICodeService
 from services.agent_service import AgentService
-from services.code_validator import CodeValidator
+from utils.code_validator import CodeValidator
+from utils.prompts import CLARIFY_INTENT, REVIEW_TOOLS
+from template.agent_templates import (
+    MAIN_PY_BASE,
+    LOGIC_PY_DEFAULT,
+    DOCKERFILE,
+    REQUIREMENTS_TXT,
+    TOOLS_INIT_PY,
+)
 
 # Load environment variables
 load_dotenv()
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ForgeState(TypedDict):
     session_id: str  # Unique session identifier (thread_id for LangGraph)
@@ -47,7 +59,7 @@ class ForgeService:
         self.checkpointer = MemorySaver()
         self.graph = self._build_graph()
     
-    def _build_graph(self) -> StateGraph:
+    def _build_graph(self) -> CompiledStateGraph[ForgeState, None, ForgeState, ForgeState]:
         workflow = StateGraph(ForgeState)
         
         # HITL workflow nodes
@@ -171,117 +183,29 @@ class ForgeService:
         # Initialize template_code with basic structure
         template_code = {}
         
-        # Generate basic main.py
-        main_py = '''import asyncio
-import os
-from typing import Dict, List, Any
-from logic import AgentLogic
-
-class AgentManager:
-    def __init__(self):
-        self.config = self._load_config()
-        self.active_tools = self._init_active_tools()
-        self.reactive_tools = self._init_reactive_tools()
-        self.logic = AgentLogic(
-            active_tools=self.active_tools,
-            reactive_tools=self.reactive_tools
-        )
-        self.active_tasks: List[asyncio.Task] = []
-    
-    def _load_config(self) -> Dict[str, Any]:
-        return {
-            "user_id": os.getenv("USER_ID", ""),
-            "agent_id": os.getenv("AGENT_ID", ""),
-        }
-    
-    def _init_active_tools(self) -> Dict[str, Any]:
-        tools = {}
-        # Initialize selected active tools
-        return tools
-    
-    def _init_reactive_tools(self) -> Dict[str, Any]:
-        tools = {}
-        # Initialize selected reactive tools
-        return tools
-    
-    async def _handle_active_trigger(self, tool_name: str, result: Dict[str, Any]):
-        decision = await self.logic.on_trigger(tool_name, result)
-        if decision.get("action") == "execute":
-            reactive_tool = self.reactive_tools[decision["tool"]]
-            reactive_result = reactive_tool.execute(**decision["params"])
-            await self.logic.on_execution(decision, reactive_result)
-    
-    async def start(self):
-        print(f"Starting Agent")
-        for tool_name, tool in self.active_tools.items():
-            task = asyncio.create_task(
-                tool.run_loop(
-                    callback=lambda result, name=tool_name: self._handle_active_trigger(name, result)
-                )
-            )
-            self.active_tasks.append(task)
-        await asyncio.gather(*self.active_tasks)
-    
-    async def stop(self):
-        for tool in self.active_tools.values():
-            tool.is_running = False
-
-if __name__ == "__main__":
-    manager = AgentManager()
-    asyncio.run(manager.start())
-'''
-        template_code["main.py"] = main_py
-        (agent_dir / "main.py").write_text(main_py)  # Write to disk
+        # Generate basic main.py, logic.py, requirements, Dockerfile from templates
+        template_code["main.py"] = MAIN_PY_BASE
+        (agent_dir / "main.py").write_text(MAIN_PY_BASE)
         
-        # Generate basic logic.py
-        logic_py = '''from typing import Dict, Any
-import asyncio
-
-class AgentLogic:
-    def __init__(self, active_tools: Dict, reactive_tools: Dict):
-        self.active_tools = active_tools
-        self.reactive_tools = reactive_tools
-        self.state = {}
-    
-    async def on_trigger(self, tool_name: str, result: Dict[str, Any]) -> Dict[str, Any]:
-        """Called when an ACTIVE tool triggers"""
-        return {"action": "wait"}
-    
-    async def on_execution(self, decision: Dict, result: Dict):
-        """Called after reactive tool executes"""
-        self.state["last_action"] = {"decision": decision, "result": result}
-'''
-        template_code["logic.py"] = logic_py
-        (agent_dir / "logic.py").write_text(logic_py)  # Write to disk
+        template_code["logic.py"] = LOGIC_PY_DEFAULT
+        (agent_dir / "logic.py").write_text(LOGIC_PY_DEFAULT)
         
-        # Generate requirements.txt
-        requirements = "asyncio\npython-dotenv\n"
-        template_code["requirements.txt"] = requirements
-        (agent_dir / "requirements.txt").write_text(requirements)  # Write to disk
+        template_code["requirements.txt"] = REQUIREMENTS_TXT
+        (agent_dir / "requirements.txt").write_text(REQUIREMENTS_TXT)
         
-        # Generate Dockerfile
-        dockerfile = '''FROM python:3.11-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["python", "main.py"]
-'''
-        template_code["Dockerfile"] = dockerfile
-        (agent_dir / "Dockerfile").write_text(dockerfile)  # Write to disk
+        template_code["Dockerfile"] = DOCKERFILE
+        (agent_dir / "Dockerfile").write_text(DOCKERFILE)
         
         # Create tools directory structure
         tools_dir = agent_dir / "tools"
         tools_dir.mkdir(exist_ok=True)
-        template_code["tools/__init__.py"] = ""
-        (tools_dir / "__init__.py").write_text("")  # Write to disk
+        template_code["tools/__init__.py"] = TOOLS_INIT_PY
+        (tools_dir / "__init__.py").write_text(TOOLS_INIT_PY)
         
         state["template_code"] = template_code
         state["current_step"] = "initialized"
+        
+        logger.info(f"Initialized template for agent {agent_id}")
         return state
     
     def _wait_for_tools(self, state: ForgeState) -> ForgeState:
@@ -311,7 +235,6 @@ CMD ["python", "main.py"]
             state["template_code"]["tools/base.py"] = base_content
             (tools_dir_path / "base.py").write_text(base_content)
         
-        # Copy selected tools
         for tool in state.get("selected_tools", []):
             tool_name = tool.get("name", "")
             tool_code = tool.get("code", "")
@@ -330,6 +253,7 @@ CMD ["python", "main.py"]
                     pass
         
         state["current_step"] = "tools_added"
+        logger.info(f"Added {len(state['selected_tools'])} tools to agent {state['agent_id']}")
         return state
     
     def _should_wait_for_custom_tools(self, state: ForgeState) -> str:
@@ -348,7 +272,7 @@ CMD ["python", "main.py"]
     def _update_custom_tools_state(self, state: ForgeState) -> ForgeState:
         """Updates state with custom tool requirements"""
         state["waiting_for_input"] = False
-        state["waiting_stage"] = ""  # Clear waiting stage
+        state["waiting_stage"] = "" 
         state["current_step"] = "custom_tools_requirements_received"
         return state
     
@@ -375,8 +299,11 @@ CMD ["python", "main.py"]
             if tool_code:
                 state["template_code"][f"tools/{tool_name}.py"] = tool_code
                 (tools_dir_path / f"{tool_name}.py").write_text(tool_code)
+                
+                logger.info(f'Added custom tool at path {tools_dir_path / f"{tool_name}.py"} with code\n\n {tool_code}')
         
         state["current_step"] = "custom_tools_added"
+        logger.info(f'Added {len(generated)} custom tools')
         return state
     
     def _wait_for_prompt(self, state: ForgeState) -> ForgeState:
@@ -398,19 +325,18 @@ CMD ["python", "main.py"]
         user_message = state.get("user_message", "")
         selected_tools = [t.get("name", "") for t in state.get("selected_tools", [])]
         
-        prompt = f"""Analyze this user request for building an agent:
-User request: {user_message}
-Selected tools: {selected_tools}
-
-Based on the user's request and selected tools, provide:
-1. A summary of what the agent will do
-2. Any clarification questions if details are missing
-3. Always include a final confirmation question: "Is everything in order to continue?"
-
-Return JSON: {{"summary": str, "questions": [str], "confirmation": str}}"""
-        
+        prompt = CLARIFY_INTENT.format(
+            user_message=user_message,
+            selected_tools=selected_tools,
+        )
         response = self.llm.invoke(prompt)
         content = response.content
+        
+        # Handle content type - can be str or list
+        if isinstance(content, list):
+            content = " ".join(str(item) for item in content)
+        else:
+            content = str(content)
         
         # Extract questions and summary
         questions = []
@@ -455,9 +381,9 @@ Return JSON: {{"summary": str, "questions": [str], "confirmation": str}}"""
         state["current_step"] = "intent_clarified"
         return state
     
-    def _needs_clarification(self, state: ForgeState) -> str:
-        """Checks if clarification is needed (always yes now - compulsory step)"""
-        return "yes"
+    def _needs_clarification(self, want_clarification:bool=True) -> str:
+        """Checks if clarification is needed"""
+        return "yes" if want_clarification else "no"
     
     def _wait_for_clarification(self, state: ForgeState) -> ForgeState:
         """Sets HITL flag for clarification"""
@@ -477,16 +403,20 @@ Return JSON: {{"summary": str, "questions": [str], "confirmation": str}}"""
         """LLM analyzes tools vs requirements and suggests changes"""
         all_tools = state["selected_tools"] + state.get("generated_tools", [])
         user_message = state.get("user_message", "")
+        tools_list = [t.get("name", "") for t in all_tools]
         
-        prompt = f"""Review the selected tools for this agent:
-User requirements: {user_message}
-Selected tools: {[t.get('name', '') for t in all_tools]}
-
-Suggest tool additions or removals if needed.
-Return JSON: {{"add": [tool_names], "remove": [tool_names], "reason": str}}"""
-        
+        prompt = REVIEW_TOOLS.format(
+            user_message=user_message,
+            tools_list=tools_list,
+        )
         response = self.llm.invoke(prompt)
         content = response.content
+        
+        # Handle content type - can be str or list
+        if isinstance(content, list):
+            content = " ".join(str(item) for item in content)
+        else:
+            content = str(content)
         
         # Parse suggestions (simplified)
         tool_changes = {
@@ -593,15 +523,12 @@ Return JSON: {{"add": [tool_names], "remove": [tool_names], "reason": str}}"""
     def _update_code_state(self, state: ForgeState) -> ForgeState:
         """Updates state with code edits"""
         state["waiting_for_input"] = False
-        state["waiting_stage"] = ""  # Clear waiting stage
+        state["waiting_stage"] = ""
         state["current_step"] = "code_updated"
         return state
     
     def _finalize_agent(self, state: ForgeState) -> ForgeState:
         """Creates final agent codebase"""
-        # Ensure agent_config exists
-        if "agent_config" not in state:
-            state["agent_config"] = {}
         
         # Ensure agent_dir_path exists, recreate if missing
         if "agent_dir_path" not in state or not state["agent_dir_path"]:
@@ -620,9 +547,7 @@ Return JSON: {{"add": [tool_names], "remove": [tool_names], "reason": str}}"""
             file_full_path.parent.mkdir(parents=True, exist_ok=True)
             file_full_path.write_text(content)
         
-        # Create agent using agent service
         all_tools = state.get("selected_tools", []) + state.get("generated_tools", [])
-        # Get logic_code from state or template_code
         logic_code = state.get("logic_code") or template_code.get("logic.py", "")
         user_id = state.get("agent_config", {}).get("user_id", "default")
         agent_config = state.get("agent_config", {})
@@ -635,6 +560,7 @@ Return JSON: {{"add": [tool_names], "remove": [tool_names], "reason": str}}"""
         state["agent_id"] = agent_id
         state["current_step"] = "finalized"
         state["waiting_for_input"] = False
+        logger.info(f"Finalized agent {agent_id} with {len(all_tools)} tools and final state\n\n {state}")
         return state
     
     # Legacy method for backward compatibility
@@ -688,11 +614,9 @@ Return JSON: {{"add": [tool_names], "remove": [tool_names], "reason": str}}"""
             finalize=False
         )
         
-        config = {"configurable": {"thread_id": session_id}}
+        config: Any = {"configurable": {"thread_id": session_id}}
         
-        # Stream until first HITL pause
         async for event in self.graph.astream(initial_state, config=config):
-            # Check if we've reached a HITL node
             if "waiting_for_input" in event and event.get("waiting_for_input"):
                 break
         
@@ -700,7 +624,7 @@ Return JSON: {{"add": [tool_names], "remove": [tool_names], "reason": str}}"""
     
     async def get_state(self, session_id: str) -> Dict[str, Any]:
         """Gets current state from checkpoint"""
-        config = {"configurable": {"thread_id": session_id}}
+        config: Any = {"configurable": {"thread_id": session_id}}
         state = self.graph.get_state(config)
         if state:
             return state.values
@@ -708,7 +632,7 @@ Return JSON: {{"add": [tool_names], "remove": [tool_names], "reason": str}}"""
     
     async def resume_workflow(self, session_id: str) -> Dict[str, Any]:
         """Resumes workflow from checkpoint by routing to the appropriate update node if needed"""
-        config = {"configurable": {"thread_id": session_id}}
+        config: Any = {"configurable": {"thread_id": session_id}}
         
         # Get current state to determine if we need to route to an update node
         current_state = self.graph.get_state(config)
@@ -716,7 +640,7 @@ Return JSON: {{"add": [tool_names], "remove": [tool_names], "reason": str}}"""
             raise ValueError(f"Session {session_id} not found")
         
         waiting_stage = current_state.values.get("waiting_stage")
-        state_values = current_state.values.copy()
+        state_values = cast(ForgeState, current_state.values.copy())
         
         # Map waiting_stage to the corresponding update node function
         # Only invoke if we're at END and waiting_for_input was just set to False
@@ -751,3 +675,168 @@ Return JSON: {{"add": [tool_names], "remove": [tool_names], "reason": str}}"""
                 break
         
         return await self.get_state(session_id)
+    
+    async def handle_submit_tools(self, session_id: str, tools: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Handle tool submission endpoint logic"""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        
+        state_values = cast(ForgeState, current_state.values.copy())
+        state_values["selected_tools"] = tools
+        state_values["waiting_for_input"] = False
+        
+        updated_state = self._update_tools_state(state_values)
+        updated_state = self._add_platform_tools(updated_state)
+        
+        # Check if we need custom tools
+        if self._should_wait_for_custom_tools(updated_state) == "no":
+            updated_state = self._wait_for_prompt(updated_state)
+        else:
+            updated_state = self._wait_for_custom_tools(updated_state)
+        
+        # Update checkpoint
+        self.graph.update_state(config, updated_state)
+        
+        return await self.get_state(session_id)
+    
+    async def handle_submit_custom_tools(self, session_id: str, requirements: str) -> Optional[Dict[str, Any]]:
+        """Handle custom tool requirements submission"""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        
+        state_values = cast(ForgeState, current_state.values.copy())
+        state_values["custom_tool_requirements"] = requirements
+        state_values["waiting_for_input"] = False
+        
+        updated_state = self._update_custom_tools_state(state_values)
+        self.graph.update_state(config, updated_state)
+        
+        await self.resume_workflow(session_id)
+        return await self.get_state(session_id)
+    
+    async def handle_submit_prompt(self, session_id: str, prompt: str) -> Optional[Dict[str, Any]]:
+        """Handle user prompt submission"""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        
+        state_values = cast(ForgeState, current_state.values.copy())
+        state_values["user_message"] = prompt
+        state_values["waiting_for_input"] = False
+        
+        # Manually invoke the chain: update_prompt_state → clarify_intent → wait_for_clarification
+        updated_state = self._update_prompt_state(state_values)
+        updated_state = self._clarify_intent(updated_state)
+        updated_state = self._wait_for_clarification(updated_state)
+        
+        # Update checkpoint
+        self.graph.update_state(config, updated_state)
+        
+        return await self.get_state(session_id)
+    
+    async def handle_submit_clarification(self, session_id: str, answers: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Handle clarification answers submission"""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        
+        state_values = cast(ForgeState, current_state.values.copy())
+        state_values["user_clarifications"] = answers
+        state_values["waiting_for_input"] = False
+        
+        # Manually invoke the chain: update_clarification_state → review_tools → apply changes → generate_logic → validate_code → wait_for_code_review/finalize
+        updated_state = self._update_clarification_state(state_values)
+        
+        # Continue automatically: review_tools → apply changes → generate_logic → validate_code
+        updated_state = self._review_tools(updated_state)
+        
+        # Apply tool changes if needed
+        if self._has_tool_changes(updated_state) == "yes":
+            updated_state = self._apply_tool_changes(updated_state)
+        
+        # Generate logic
+        updated_state = self._generate_logic(updated_state)
+        
+        # Validate code
+        updated_state = self._validate_code(updated_state)
+        
+        # Check if there are errors - if yes, wait for code review, if no, finalize
+        if self._has_code_errors(updated_state) == "yes":
+            updated_state = self._wait_for_code_review(updated_state)
+        else:
+            updated_state = self._finalize_agent(updated_state)
+        
+        # Update checkpoint
+        self.graph.update_state(config, updated_state)
+        
+        return await self.get_state(session_id)
+    
+    async def handle_submit_tool_review(self, session_id: str, changes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Handle tool review confirmation/rejection"""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        
+        state_values = cast(ForgeState, current_state.values.copy())
+        state_values["tool_changes"] = changes
+        state_values["waiting_for_input"] = False
+        
+        # Manually invoke update_tool_review_state since we're at END
+        updated_state = self._update_tool_review_state(state_values)
+        
+        # Update checkpoint
+        self.graph.update_state(config, updated_state)
+        
+        await self.resume_workflow(session_id)
+        return await self.get_state(session_id)
+    
+    async def handle_update_code(self, session_id: str, file_path: str, content: str) -> Optional[Dict[str, Any]]:
+        """Handle code update submission"""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        
+        state_values = cast(ForgeState, current_state.values.copy())
+        # Update template_code
+        if "template_code" not in state_values:
+            state_values["template_code"] = {}
+        state_values["template_code"][file_path] = content
+        state_values["waiting_for_input"] = False
+        
+        # Manually invoke update_code_state since we're at END
+        updated_state = self._update_code_state(state_values)
+        
+        # Update checkpoint
+        self.graph.update_state(config, updated_state)
+        
+        await self.resume_workflow(session_id)
+        return await self.get_state(session_id)
+    
+    async def handle_finalize_agent(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Handle agent finalization"""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        
+        state_values = cast(ForgeState, current_state.values.copy())
+        state_values["finalize"] = True
+        state_values["waiting_for_input"] = False
+        
+        # Manually invoke finalize_agent since we're at END
+        updated_state = self._finalize_agent(state_values)
+        
+        # Update checkpoint
+        self.graph.update_state(config, updated_state)
+        
+        return await self.get_state(session_id)
+
+
