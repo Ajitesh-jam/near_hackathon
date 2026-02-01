@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import BuildAgent from "./pages/BuildAgent";
 import NotFound from "./pages/NotFound";
+import CreateSubAccount from "./pages/CreateSubAccount";
 
 const queryClient = new QueryClient();
 
@@ -17,6 +18,7 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
+          <Route path="/createSubAccount" element={<CreateSubAccount />} />
           <Route path="/buildAgent" element={<BuildAgent />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />

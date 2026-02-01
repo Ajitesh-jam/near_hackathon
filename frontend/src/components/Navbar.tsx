@@ -6,6 +6,11 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { WalletButton } from "./NEAR/NEARWalletButton";
+import { CreateAccountButton } from "./NEAR/CreateAccount";
+// import {
+//   CreateSubAccountButton,
+//   SubaccountManager,
+// } from "../pages/CreateSubAccount";
 
 const navItems = [
   { name: "Home", path: "/" },
@@ -35,7 +40,7 @@ export const Navbar: React.FC = () => {
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center gap-2">
-            {navItems.map((item) => (
+            {/* {navItems.map((item) => (
               <Link key={item.path} to={item.path}>
                 <Button
                   variant="ghost"
@@ -51,7 +56,16 @@ export const Navbar: React.FC = () => {
               </Button>
             </Link>
 
-            <ConnectButton />
+            <ConnectButton /> 
+            <WalletButton /> */}
+            <CreateAccountButton />
+
+            <Link to="/createSubAccount">
+              <Button variant="glow" className="ml-4">
+                Sub Account Manager
+              </Button>
+            </Link>
+
             <WalletButton />
           </div>
 

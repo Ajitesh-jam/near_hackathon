@@ -39,6 +39,16 @@ const config = createConfig({
   },
 });
 
+// const nearConfig = {
+//   networkId: "testnet",
+//   // Instead of rpcUrl, it usually looks for these or
+//   // expects you to define which wallets you want to support.
+//   selectorOptions: {
+//     network: "testnet",
+//     modules: [] // You'll add wallet modules here (MyNearWallet, Meteor, etc.)
+//   },
+// };
+
 const queryClient = new QueryClient();
 
 export function Web3Provider({ children }: { children: React.ReactNode }) {
