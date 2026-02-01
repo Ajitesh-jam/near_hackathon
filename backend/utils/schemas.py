@@ -86,3 +86,6 @@ class CodeUpdateRequestSchema(BaseModel):
 
 class CodeValidationResponseSchema(BaseModel):
     errors: List[Dict[str, Any]]
+
+class EnvVariablesRequestSchema(BaseModel):
+    env_variables: Dict[str, str]

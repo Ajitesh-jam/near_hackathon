@@ -89,6 +89,16 @@ export const api = {
       { method: 'DELETE' }
     ),
 
+  getAgentFiles: (agentId: string, userId: string) =>
+    request<{ template_code: Record<string, string> }>(
+      `/agents/${agentId}/files?user_id=${userId}`
+    ),
+
+  getSessionAgentFiles: (sessionId: string) =>
+    request<{ template_code: Record<string, string> }>(
+      `/forge/session/${sessionId}/agent-files`
+    ),
+
   // HITL Workflow endpoints
   startForgeSession: (userId: string) =>
     request<{ session_id: string; status: string }>('/forge/start', {
@@ -179,6 +189,17 @@ export const api = {
     }>(`/forge/session/${sessionId}/code-update`, {
       method: 'POST',
       body: JSON.stringify({ file_path: filePath, content }),
+    }),
+
+  submitEnvVariables: (sessionId: string, envVariables: Record<string, string>) =>
+    request<{
+      session_id: string;
+      waiting_for_input: boolean;
+      waiting_stage: string;
+      current_step: string;
+    }>(`/forge/session/${sessionId}/env-variables`, {
+      method: 'POST',
+      body: JSON.stringify({ env_variables: envVariables }),
     }),
 
   finalizeAgent: (sessionId: string) =>

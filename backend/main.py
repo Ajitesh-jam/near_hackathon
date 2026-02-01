@@ -19,6 +19,7 @@ load_dotenv()
 
 import services.agent_service as chat_agent_service
 from utils.schemas import (
+    EnvVariablesRequestSchema,
     ToolInfoSchema,
     AgentGenerationRequestSchema,
     AgentGenerationResponseSchema,
@@ -98,7 +99,6 @@ async def list_tools(user_id: str = "default_user"):
     if tool_registry is None:
         raise HTTPException(status_code=503, detail="Services not initialized.")
     tools = tool_registry.list_tools(user_id)
-    logger.info(f"Tools listed for user {user_id}: {tools}")
     return tools
 
 @app.post("/forge/process")
@@ -182,6 +182,31 @@ async def get_agent_code(agent_id: str, user_id: str):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading agent code: {str(e)}")
+
+
+@app.get("/agents/{agent_id}/files")
+async def get_agent_files(agent_id: str, user_id: str):
+    """Get all agent files as flat path -> content (includes contract/, .env.development.local, docker-compose, etc.)"""
+    if agent_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    try:
+        files = agent_service.get_agent_files_flat(user_id, agent_id)
+        return {"template_code": files}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading agent files: {str(e)}")
+
+
+@app.get("/forge/session/{session_id}/agent-files")
+async def get_session_agent_files(session_id: str):
+    """Get all files from the session's agent directory (for in-progress forge sessions)"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    files = forge_service.get_session_agent_files(session_id)
+    if files is None:
+        raise HTTPException(status_code=404, detail="Session not found or agent directory not initialized")
+    return {"template_code": files}
 
 
 # HITL Workflow Endpoints
@@ -379,6 +404,40 @@ async def finalize_agent(session_id: str):
         selected_tools=state.get("selected_tools"),
         agent_id=state.get("agent_id")
     )
+    
+@app.post("/forge/session/{session_id}/env-variables")
+async def submit_env_variables(session_id: str, request: EnvVariablesRequestSchema):
+    """Submit environment variables"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    # check if user has passed all the required env variables
+    if not request.env_variables:
+        raise HTTPException(status_code=400, detail="Env variables are required")
+    if not request.env_variables.get("NEAR_ACCOUNT_ID"):
+        raise HTTPException(status_code=400, detail="NEAR_ACCOUNT_ID is required")
+    if not request.env_variables.get("NEAR_SEED_PHRASE"):
+        raise HTTPException(status_code=400, detail="NEAR_SEED_PHRASE is required")
+    if not request.env_variables.get("PHALA_API_KEY"):
+        raise HTTPException(status_code=400, detail="PHALA_API_KEY is required")
+
+            
+    state = await forge_service.handle_env_variables(session_id, request.env_variables)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return ForgeSessionStatusResponseSchema(
+        session_id=session_id,
+        waiting_for_input=state.get("waiting_for_input", False),
+        waiting_stage=state.get("waiting_stage", ""),
+        current_step=state.get("current_step", ""),
+        template_code=state.get("template_code"),
+        code_errors=state.get("code_errors"),
+        user_clarifications=state.get("user_clarifications"),
+        tool_changes=state.get("tool_changes"),
+        selected_tools=state.get("selected_tools"),
+        agent_id=state.get("agent_id")
+    )
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080, reload=True)

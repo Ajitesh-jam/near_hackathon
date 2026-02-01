@@ -3,6 +3,10 @@ Agent code templates as importable strings.
 Used by forge_service and agent_service for generated agent codebases.
 """
 from typing import List, Dict, Any
+from config import Config
+config = Config()
+
+port_to_start_agent = config.port_to_start_agent
 
 # --- Static template strings (forge minimal agent) ---
 
@@ -115,6 +119,7 @@ import logging
 from typing import Dict, List, Any
 {active_imports}
 {reactive_imports}
+{port}
 from logic import AgentLogic
 
 # Configure logging
@@ -188,9 +193,12 @@ def get_main_py_content(
     """Build main.py content with given import lines and tools list for config."""
     active_block = "\n".join(active_imports) if active_imports else ""
     reactive_block = "\n".join(reactive_imports) if reactive_imports else ""
+    port = str(config.port_to_start_agent)
+    config.port_to_start_agent+=1
     config_tools = repr(tools)
     return MAIN_PY_TEMPLATE.format(
         active_imports=active_block,
         reactive_imports=reactive_block,
         config_tools=config_tools,
+        port=port,
     )

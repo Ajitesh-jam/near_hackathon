@@ -23,6 +23,7 @@ class AgentService:
         self.agents_db.parent.mkdir(exist_ok=True)
         self.temp_dir = Path(__file__).parent.parent / "Temp"
         self.temp_dir.mkdir(exist_ok=True)
+        self.template_dir = Path(__file__).parent.parent / "template"
         self.ai_code = AICodeService()
         self.tool_registry = ToolRegistry()
     
@@ -146,6 +147,45 @@ class AgentService:
         file_tree = build_file_tree(agent_dir)
         return {"files": file_tree}
     
+    def _read_all_files_from_dir(self, path: Path, prefix: str = "") -> Dict[str, str]:
+        """Recursively read all files from directory into flat path -> content. Includes dotfiles, contract/, etc. Skips __pycache__."""
+        result: Dict[str, str] = {}
+        if not path.exists() or not path.is_dir():
+            return result
+        for item in sorted(path.iterdir()):
+            rel_path = f"{prefix}/{item.name}" if prefix else item.name
+            if item.name == "__pycache__" or item.name.endswith(".pyc"):
+                continue
+            if item.is_file():
+                try:
+                    content = item.read_text(encoding="utf-8")
+                    result[rel_path] = content
+                except UnicodeDecodeError:
+                    result[rel_path] = "# Binary file - cannot display"
+                except Exception as e:
+                    result[rel_path] = f"# Error reading file: {e}"
+            elif item.is_dir():
+                result.update(self._read_all_files_from_dir(item, rel_path))
+        return result
+    
+    def get_agent_files_flat(self, user_id: str, agent_id: str) -> Dict[str, str]:
+        """Returns all agent files as flat path -> content (including contract/, .env.development.local, docker-compose.yaml, etc.)"""
+        agents = self._load_agents()
+        agent = next((a for a in agents if a["user_id"] == user_id and a["agent_id"] == agent_id), None)
+        if not agent:
+            raise ValueError(f"Agent {agent_id} not found for user {user_id}")
+        agent_dir = Path(agent.get("path", ""))
+        if not agent_dir.exists():
+            raise ValueError(f"Agent directory not found: {agent_dir}")
+        return self._read_all_files_from_dir(agent_dir)
+    
+    def get_agent_files_from_path(self, agent_dir: str) -> Dict[str, str]:
+        """Returns all files from given agent directory path (for forge session)."""
+        path = Path(agent_dir)
+        if not path.exists():
+            return {}
+        return self._read_all_files_from_dir(path)
+    
     # Template Generation
     def _generate_codebase(self, user_id: str, agent_id: str, tools: List[Dict], logic_code: str, config: Dict) -> Path:
         """Generates complete agent codebase structure"""
@@ -159,6 +199,8 @@ class AgentService:
         self._generate_requirements(agent_dir)
         self._generate_dockerfile(agent_dir)
         self._generate_env_example(agent_dir, tools, config)
+        # Copy contract/, LICENSE, .env.development.local from template
+        self._copy_template_extras(agent_dir)
         
         return agent_dir
     
@@ -223,6 +265,22 @@ class AgentService:
         """Generates Dockerfile"""
         (agent_dir / "Dockerfile").write_text(DOCKERFILE)
     
+    # Names to skip when copying template to agent (backend-only)
+    _TEMPLATE_SKIP = frozenset({"agent_templates.py", "__pycache__"})
+
+    def _copy_template_extras(self, agent_dir: Path):
+        """Copies all template contents to agent dir: contract/, LICENSE, .gitignore, docker-compose.yaml, sbom.cyclonedx.json, .env.development.local, etc."""
+        if not self.template_dir.exists():
+            return
+        for item in self.template_dir.iterdir():
+            if item.name in self._TEMPLATE_SKIP or item.name.endswith(".pyc"):
+                continue
+            dst = agent_dir / item.name
+            if item.is_file():
+                shutil.copy2(item, dst)
+            elif item.is_dir():
+                shutil.copytree(item, dst, dirs_exist_ok=True)
+
     def _generate_env_example(self, agent_dir: Path, tools: List[Dict], config: Dict):
         """Generates .env.example"""
         env_lines = [

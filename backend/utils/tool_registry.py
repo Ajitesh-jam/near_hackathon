@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 class ToolRegistry:
     def __init__(self):
-        self.platform_tools_dir = Path(__file__).parent / "tools"
+        self.platform_tools_dir = Path(__file__).parent / "tools_storage"
         self.temp_tools: Dict[str, List[Dict]] = {}  # Temporary AI-generated tools
     
     def list_tools(self, user_id: str = "") -> Dict[str, List[Dict]]:

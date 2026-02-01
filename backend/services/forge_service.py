@@ -5,6 +5,7 @@ from typing import TypedDict, List, Dict, Any, Optional, cast
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 import os
+import shutil
 from pathlib import Path
 from utils.tool_registry import ToolRegistry
 from services.ai_code_service import AICodeService
@@ -22,8 +23,44 @@ from template.agent_templates import (
 # Load environment variables
 load_dotenv()
 import logging
-
 logger = logging.getLogger(__name__)
+from config import Config
+config = Config()
+
+# Path to tools base.py (Tool, ToolType) - used by all generated/platform tools
+BASE_TOOLS_DIR = Path(__file__).resolve().parent.parent / "utils" / "tools_storage"
+TOOLS_BASE_PY_PATH = BASE_TOOLS_DIR / "base.py"
+# Template dir for contract, LICENSE, .gitignore, docker-compose, sbom, etc.
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "template"
+
+# Names to skip when copying template to agent (backend-only)
+TEMPLATE_SKIP_NAMES = frozenset({"agent_templates.py", "__pycache__"})
+
+DOCKER_HOST = config.docker_host
+
+
+
+
+
+def _copy_template_to_agent(template_dir: Path, agent_dir: Path, log=None) -> None:
+    """Copies all template contents to agent dir except backend-only files."""
+    if not template_dir.exists():
+        if log:
+            log.warning(f"Template dir not found at {template_dir}")
+        return
+    for item in template_dir.iterdir():
+        if item.name in TEMPLATE_SKIP_NAMES or item.name.endswith(".pyc"):
+            continue
+        dst = agent_dir / item.name
+        if item.is_file():
+            shutil.copy2(item, dst)
+            if log:
+                log.info(f"Copied {item.name} to agent dir")
+        elif item.is_dir():
+            shutil.copytree(item, dst, dirs_exist_ok=True)
+            if log:
+                log.info(f"Copied {item.name}/ to agent dir")
+
 
 class ForgeState(TypedDict):
     session_id: str  # Unique session identifier (thread_id for LangGraph)
@@ -44,7 +81,23 @@ class ForgeState(TypedDict):
     tool_changes: Dict[str, Any]  # Proposed tool additions/removals
     agent_dir_path: str  # Path to agent directory
     custom_tool_requirements: str  # Requirements for custom tools
-    finalize: bool  # Flag to finalize agent
+    finalize: bool  # Flag to finalize agent    
+    docker_tag: str  # Docker tag for agent
+    
+    # we Can store these varibales also it runs on a Shade-agent , 
+    # but for enhanced privacy reasons we are not storing them here and will just add them directly to .env
+    
+    
+    # near_account_id: str  # Near account id for agent
+    # near_seed_phrase: str  # Near seed phrase for agent
+    # near_rpc_json: str  # Near RPC JSON for agent
+    # near_contract_id: str  # Near contract id for agent
+    # near_contract_codehash: str  # Near contract codehash for agent
+    # near_contract_app_codehash: str  # Near contract app codehash for agent
+    # phala_api_key: str  # Phala API key for agent
+    # near_ai_api_key: str  # Near AI API key for agent
+
+
 
 class ForgeService:
     def __init__(self):
@@ -84,6 +137,7 @@ class ForgeService:
         workflow.add_node("wait_for_code_review", self._wait_for_code_review)
         workflow.add_node("update_code_state", self._update_code_state)
         workflow.add_node("finalize_agent", self._finalize_agent)
+        
         
         # Entry point
         workflow.set_entry_point("initialize_template")
@@ -202,9 +256,20 @@ class ForgeService:
         template_code["tools/__init__.py"] = TOOLS_INIT_PY
         (tools_dir / "__init__.py").write_text(TOOLS_INIT_PY)
         
-        state["template_code"] = template_code
-        state["current_step"] = "initialized"
+        # Add base.py (Tool, ToolType) so all tools can import from .base
+        if TOOLS_BASE_PY_PATH.exists():
+            base_content = TOOLS_BASE_PY_PATH.read_text()
+            template_code["tools/base.py"] = base_content
+            (tools_dir / "base.py").write_text(base_content)
+        else:
+            logger.warning(f"tools base.py not found at {TOOLS_BASE_PY_PATH}")
         
+        # Copy all template contents to agent dir (contract, LICENSE, .gitignore, docker-compose, sbom, etc.)
+        _copy_template_to_agent(TEMPLATE_DIR, agent_dir, logger)
+        
+        state["template_code"] = template_code
+        state["docker_tag"] = f"{DOCKER_HOST}/client-shade-agent:{agent_id}"
+        state["current_step"] = "initialized"
         logger.info(f"Initialized template for agent {agent_id}")
         return state
     
@@ -228,10 +293,9 @@ class ForgeService:
         tools_dir_path = Path(state["agent_dir_path"]) / "tools"
         tools_dir_path.mkdir(exist_ok=True)
         
-        # Copy base.py first
-        base_file = Path(__file__).parent.parent / "template" / "tools" / "base.py"
-        if base_file.exists():
-            base_content = base_file.read_text()
+        # Ensure base.py is present (Tool, ToolType) so tool imports work
+        if TOOLS_BASE_PY_PATH.exists() and "tools/base.py" not in state.get("template_code", {}):
+            base_content = TOOLS_BASE_PY_PATH.read_text()
             state["template_code"]["tools/base.py"] = base_content
             (tools_dir_path / "base.py").write_text(base_content)
         
@@ -291,6 +355,13 @@ class ForgeService:
         # Add to temp registry and template_code
         user_id = state["agent_config"].get("user_id", "default")
         tools_dir_path = Path(state["agent_dir_path"]) / "tools"
+        tools_dir_path.mkdir(parents=True, exist_ok=True)
+        
+        # Ensure base.py is present so custom tools can import from .base
+        if TOOLS_BASE_PY_PATH.exists() and "tools/base.py" not in state.get("template_code", {}):
+            base_content = TOOLS_BASE_PY_PATH.read_text()
+            state["template_code"]["tools/base.py"] = base_content
+            (tools_dir_path / "base.py").write_text(base_content)
         
         for tool in generated:
             self.tool_registry.add_temp_tool(user_id, tool)
@@ -586,7 +657,8 @@ class ForgeService:
             tool_changes={},
             agent_dir_path="",
             custom_tool_requirements="",
-            finalize=False
+            finalize=False,
+            docker_tag=""
         )
         final_state = await self.graph.ainvoke(initial_state)
         return final_state
@@ -611,7 +683,8 @@ class ForgeService:
             tool_changes={},
             agent_dir_path="",
             custom_tool_requirements="",
-            finalize=False
+            finalize=False,
+            docker_tag=""
         )
         
         config: Any = {"configurable": {"thread_id": session_id}}
@@ -838,5 +911,38 @@ class ForgeService:
         self.graph.update_state(config, updated_state)
         
         return await self.get_state(session_id)
-
-
+    
+    async def handle_env_variables(self, session_id: str, env_variables: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        """Handle environment variables submission"""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        
+        # add env varibales directly to agent_dir/.env.development.local
+        agent_dir = Path(current_state.values.get("agent_dir_path", ""))
+        if not agent_dir:
+            raise ValueError(f"Agent directory not found for session {session_id}")
+        env_file = agent_dir / ".env.development.local"
+        if not env_file.exists():
+            return None
+        with open(env_file, "a") as f:
+            f.write(f"  NEAR_ACCOUNT_ID={env_variables.get('NEAR_ACCOUNT_ID', '')}\n")
+            f.write(f"  NEAR_SEED_PHRASE={env_variables.get('NEAR_SEED_PHRASE', '')}\n")
+            f.write(f"  NEXT_PUBLIC_contractId={env_variables.get('NEXT_PUBLIC_contractId', '')}\n")
+            f.write(f"  NEAR_CONTRACT_CODEHASH={env_variables.get('NEAR_CONTRACT_CODEHASH', '')}\n")
+            f.write(f"  PHALA_API_KEY={env_variables.get('PHALA_API_KEY', '')}\n")
+            f.write(f"  NEAR_AI_API_KEY={env_variables.get('NEAR_AI_API_KEY', '')}\n")
+        return await self.get_state(session_id)
+    
+    def get_session_agent_files(self, session_id: str) -> Optional[Dict[str, str]]:
+        """Returns all files from the session's agent directory (contract/, .env, docker-compose, etc.)"""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        agent_dir = current_state.values.get("agent_dir_path", "")
+        if not agent_dir:
+            return None
+        return self.agent_service.get_agent_files_from_path(agent_dir)
+        
