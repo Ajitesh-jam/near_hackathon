@@ -1,3 +1,5 @@
+import asyncio
+import subprocess
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
@@ -38,10 +40,6 @@ TEMPLATE_SKIP_NAMES = frozenset({"agent_templates.py", "__pycache__"})
 
 DOCKER_HOST = config.docker_host
 
-
-
-
-
 def _copy_template_to_agent(template_dir: Path, agent_dir: Path, log=None) -> None:
     """Copies all template contents to agent dir except backend-only files."""
     if not template_dir.exists():
@@ -60,7 +58,6 @@ def _copy_template_to_agent(template_dir: Path, agent_dir: Path, log=None) -> No
             shutil.copytree(item, dst, dirs_exist_ok=True)
             if log:
                 log.info(f"Copied {item.name}/ to agent dir")
-
 
 class ForgeState(TypedDict):
     session_id: str  # Unique session identifier (thread_id for LangGraph)
@@ -111,6 +108,7 @@ class ForgeService:
         self.code_validator = CodeValidator()
         self.checkpointer = MemorySaver()
         self.graph = self._build_graph()
+        
     
     def _build_graph(self) -> CompiledStateGraph[ForgeState, None, ForgeState, ForgeState]:
         workflow = StateGraph(ForgeState)
@@ -634,6 +632,63 @@ class ForgeService:
         logger.info(f"Finalized agent {agent_id} with {len(all_tools)} tools and final state\n\n {state}")
         return state
     
+    def execute_command(self, session_id: str, command: str) -> Optional[Dict[str, Any]]:
+        """Execute command in the agent directory; logs stream to server terminal."""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        agent_dir = current_state.values.get("agent_dir_path", "")
+        if not agent_dir:
+            return None
+        agent_path = Path(agent_dir)
+        if not agent_path.exists():
+            logger.error(f"Agent dir not found: {agent_dir}")
+            return None
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=str(agent_path),
+                stdout=None,
+                stderr=None,
+            )
+            return {"success": result.returncode == 0, "returncode": result.returncode}
+        except Exception as e:
+            logger.exception("execute_command failed: %s", e)
+            return {"success": False, "error": str(e)}
+
+    async def compile_contract(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Compile contract"""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        agent_dir = current_state.values.get("agent_dir_path", "")
+        if not agent_dir:
+            return None
+        agent_path = Path(agent_dir)
+        if not agent_path.exists():
+            logger.error(f"Agent dir not found: {agent_dir}")
+            return None
+        return self.execute_command(session_id, "bash deply.sh --compile-only")
+    
+    async def build_docker_image(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Compile contract, then build and push Docker image; logs stream to server terminal."""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        agent_dir = current_state.values.get("agent_dir_path", "")
+        if not agent_dir:
+            return None
+        agent_path = Path(agent_dir)
+        if not agent_path.exists():
+            logger.error(f"Agent dir not found: {agent_dir}")
+            return None
+
+        return self.execute_command(session_id, "bash deply.sh --image")
+    
     # Legacy method for backward compatibility
     async def process(self, user_message: str, user_id: str) -> Dict[str, Any]:
         """Legacy entry point - use start_session instead"""
@@ -926,13 +981,21 @@ class ForgeService:
         env_file = agent_dir / ".env.development.local"
         if not env_file.exists():
             return None
+        
+        logger.info(f"Adding env variables to {env_file}")
+        logger.info(f"config.docker_host: {config}")
+        
+        next_account_id = env_variables.get('NEAR_ACCOUNT_ID', 'ajitesh-1.testnet')
         with open(env_file, "a") as f:
+            
             f.write(f"  NEAR_ACCOUNT_ID={env_variables.get('NEAR_ACCOUNT_ID', '')}\n")
             f.write(f"  NEAR_SEED_PHRASE={env_variables.get('NEAR_SEED_PHRASE', '')}\n")
-            f.write(f"  NEXT_PUBLIC_contractId={env_variables.get('NEXT_PUBLIC_contractId', '')}\n")
+            f.write(f"  NEXT_PUBLIC_contractId={env_variables.get('NEXT_PUBLIC_contractId', f'ac-sandbox.{next_account_id}')}\n")
             f.write(f"  NEAR_CONTRACT_CODEHASH={env_variables.get('NEAR_CONTRACT_CODEHASH', '')}\n")
             f.write(f"  PHALA_API_KEY={env_variables.get('PHALA_API_KEY', '')}\n")
             f.write(f"  NEAR_AI_API_KEY={env_variables.get('NEAR_AI_API_KEY', '')}\n")
+            f.write(f"  DOCKER_TAG={DOCKER_HOST}/{current_state.values.get('agent_dir_path', 'client-shade-agent')}\n")
+            
         return await self.get_state(session_id)
     
     def get_session_agent_files(self, session_id: str) -> Optional[Dict[str, str]]:
@@ -945,4 +1008,38 @@ class ForgeService:
         if not agent_dir:
             return None
         return self.agent_service.get_agent_files_from_path(agent_dir)
+        
+    async def handle_compile_contract(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Compile contract"""
+        result = await self.compile_contract(session_id)
+        if not result:
+            return None
+        return result
+
+    async def handle_build_docker_image(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Build docker image"""
+        result = await self.build_docker_image(session_id)
+        if not result:
+            return None
+        return result
+
+    async def handle_deploy_agent(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Compile contract, build Docker image, deploy agent via deply.sh --compile; logs stream to server terminal."""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        agent_dir = current_state.values.get("agent_dir_path", "")
+        if not agent_dir:
+            return None
+        agent_path = Path(agent_dir)
+        if not agent_path.exists():
+            logger.error(f"Agent dir not found: {agent_dir}")
+            return None
+       
+        return self.execute_command(session_id, "bash deply.sh --compile")
+       
+        
+
+
         

@@ -14,7 +14,8 @@ import {
   HelpCircle,
   CheckCircle2,
   KeyRound,
-  ShieldCheck
+  ShieldCheck,
+  UploadCloud
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -46,6 +47,7 @@ const steps = [
   { id: 'clarification', label: 'Clarification and Confirmation', icon: HelpCircle },
   { id: 'env', label: 'Environment Variables', icon: KeyRound },
   { id: 'code', label: 'Code Review & Finalize', icon: FileCode },
+  { id: 'deploy', label: 'Deploy Agent', icon: UploadCloud },
 ];
 
 const BuildAgent = () => {
@@ -59,6 +61,9 @@ const BuildAgent = () => {
   const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   const [chatInput, setChatInput] = useState('');
   const [isGeneratingCode, setIsGeneratingCode] = useState(false);
+  const [isCompiling, setIsCompiling] = useState(false);
+  const [isBuildingDocker, setIsBuildingDocker] = useState(false);
+  const [isDeploying, setIsDeploying] = useState(false);
   const hasUserSelectedTools = useRef(false);
   const lastWaitingStage = useRef<string | null>(null);
   const hadTemplateCodeRef = useRef(false); // only auto-advance to code review when template_code first appears
@@ -343,11 +348,57 @@ const BuildAgent = () => {
     
     try {
       await finalizeAgentInWorkflow();
+      setCurrentStep(6); // Advance to Deploy step
       toast.success('Agent created successfully!', {
         description: sessionStatus?.agent_id ? `Agent ID: ${sessionStatus.agent_id}` : '',
       });
     } catch (error) {
       // Error handled in hook
+    }
+  };
+
+  const handleCompileContract = async () => {
+    if (!sessionId) return;
+    setIsCompiling(true);
+    try {
+      await api.compileContract(sessionId);
+      toast.success('Contract compiled successfully');
+    } catch (err) {
+      toast.error('Compile failed', {
+        description: err instanceof Error ? err.message : 'Unknown error',
+      });
+    } finally {
+      setIsCompiling(false);
+    }
+  };
+
+  const handleBuildDockerImage = async () => {
+    if (!sessionId) return;
+    setIsBuildingDocker(true);
+    try {
+      await api.buildDockerImage(sessionId);
+      toast.success('Docker image built and pushed successfully');
+    } catch (err) {
+      toast.error('Build failed', {
+        description: err instanceof Error ? err.message : 'Unknown error',
+      });
+    } finally {
+      setIsBuildingDocker(false);
+    }
+  };
+
+  const handleDeployAgent = async () => {
+    if (!sessionId) return;
+    setIsDeploying(true);
+    try {
+      await api.deployAgent(sessionId);
+      toast.success('Agent deployed to Phala Cloud successfully');
+    } catch (err) {
+      toast.error('Deploy failed', {
+        description: err instanceof Error ? err.message : 'Unknown error',
+      });
+    } finally {
+      setIsDeploying(false);
     }
   };
 
@@ -404,14 +455,18 @@ const BuildAgent = () => {
             {steps.map((step, index) => {
               const Icon = step.icon;
               const isActive = currentStep === index;
+              const deployStepReady = index === steps.length - 1 && (
+                (sessionStatus?.template_code && Object.keys(sessionStatus.template_code).length > 0) ||
+                !!sessionStatus?.agent_id
+              );
               const isCompleted = currentStep > index || (sessionStatus?.agent_id && index === steps.length - 1);
+              const canNavigate = isActive || isCompleted || deployStepReady;
               
               return (
                 <button
                   key={step.id}
                   onClick={() => {
-                    // Only allow navigation to completed steps or current step
-                    if (isActive || isCompleted) {
+                    if (canNavigate) {
                       setCurrentStep(index);
                     }
                   }}
@@ -419,7 +474,7 @@ const BuildAgent = () => {
                     "flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-300",
                     isActive
                       ? "bg-primary/20 text-primary neon-border"
-                      : isCompleted
+                      : isCompleted || deployStepReady
                       ? "bg-accent/20 text-accent"
                       : "bg-secondary text-muted-foreground hover:bg-secondary/80"
                   )}
@@ -1128,15 +1183,106 @@ const BuildAgent = () => {
                       )}
                     </Button>
                   ) : sessionStatus?.agent_id ? (
-                    <Button variant="glow" disabled>
-                      <Rocket className="h-4 w-4 mr-2" />
-                      Agent Created: {sessionStatus.agent_id}
+                    <Button
+                      variant="glow"
+                      onClick={() => setCurrentStep(6)}
+                    >
+                      <UploadCloud className="h-4 w-4 mr-2" />
+                      Continue to Deploy
                     </Button>
                   ) : (
                     <Button variant="glow" disabled>
                       Waiting for code generation...
                     </Button>
                   )}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Step 6: Deploy Agent */}
+            {currentStep === 6 && (
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="glass-card p-8"
+              >
+                <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                  <UploadCloud className="h-6 w-6 text-primary" />
+                  Deploy Agent
+                </h2>
+                <p className="text-muted-foreground mb-8">
+                  Compile the contract, build the Docker image, and deploy your agent to Phala Cloud. 
+                  Run each step in order, or use the full deploy to do everything at once.
+                </p>
+                <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-3">
+                  <div className="glass-card p-6 border border-border/50">
+                    <h3 className="font-semibold mb-2 flex items-center gap-2">
+                      <FileCode className="h-4 w-4 text-primary" />
+                      Compile Contract
+                    </h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Build the NEAR contract WASM file
+                    </p>
+                    <Button
+                      variant="outline"
+                      onClick={handleCompileContract}
+                      disabled={!sessionId || isCompiling}
+                      className="w-full"
+                    >
+                      {isCompiling ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        'Compile Contract'
+                      )}
+                    </Button>
+                  </div>
+                  <div className="glass-card p-6 border border-border/50">
+                    <h3 className="font-semibold mb-2 flex items-center gap-2">
+                      <Wrench className="h-4 w-4 text-primary" />
+                      Build Docker Image
+                    </h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Build and push the Docker image
+                    </p>
+                    <Button
+                      variant="outline"
+                      onClick={handleBuildDockerImage}
+                      disabled={!sessionId || isBuildingDocker}
+                      className="w-full"
+                    >
+                      {isBuildingDocker ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        'Build Docker Image'
+                      )}
+                    </Button>
+                  </div>
+                  <div className="glass-card p-6 border border-border/50">
+                    <h3 className="font-semibold mb-2 flex items-center gap-2">
+                      <Rocket className="h-4 w-4 text-primary" />
+                      Deploy to Phala Cloud
+                    </h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Compile, build, and deploy the full agent
+                    </p>
+                    <Button
+                      variant="glow"
+                      onClick={handleDeployAgent}
+                      disabled={!sessionId || isDeploying}
+                      className="w-full"
+                    >
+                      {isDeploying ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        'Deploy Agent'
+                      )}
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex justify-between mt-8">
+                  <Button variant="outline" onClick={() => setCurrentStep(5)}>
+                    Back
+                  </Button>
                 </div>
               </motion.div>
             )}

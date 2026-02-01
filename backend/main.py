@@ -438,6 +438,46 @@ async def submit_env_variables(session_id: str, request: EnvVariablesRequestSche
         agent_id=state.get("agent_id")
     )
 
+@app.get("/forge/session/{session_id}/agent-files")
+async def get_session_agent_files(session_id: str):
+    """Get all files from the session's agent directory (for in-progress forge sessions)"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    files = forge_service.get_session_agent_files(session_id)
+    if files is None:
+        raise HTTPException(status_code=404, detail="Session not found or agent directory not initialized")
+    return {"template_code": files}
+
+@app.post("/forge/session/{session_id}/compile-contract")
+async def compile_contract(session_id: str):
+    """Compile contract"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    result = await forge_service.handle_compile_contract(session_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"status": "compiled"}
+
+@app.post("/forge/session/{session_id}/build-docker-image")
+async def build_docker_image(session_id: str):
+    """Build docker image"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    result = await forge_service.handle_build_docker_image(session_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"status": "built"}
+
+@app.post("/forge/session/{session_id}/deploy-agent")
+async def deploy_agent(session_id: str):
+    """Deploy agent"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    result = await forge_service.handle_deploy_agent(session_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"status": "deployed"}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080, reload=True)

@@ -212,4 +212,20 @@ export const api = {
     }>(`/forge/session/${sessionId}/finalize`, {
       method: 'POST',
     }),
+
+  // Deploy agent
+  compileContract: (sessionId: string) =>
+    request<{ status: string }>(`/forge/session/${sessionId}/compile-contract`, {
+      method: 'POST',
+    }),
+
+  buildDockerImage: (sessionId: string) =>
+    request<{ status: string }>(`/forge/session/${sessionId}/build-docker-image`, {
+      method: 'POST',
+    }),
+
+  deployAgent: (sessionId: string) =>
+    request<{ status: string }>(`/forge/session/${sessionId}/deploy-agent`, {
+      method: 'POST',
+    }),
 };
