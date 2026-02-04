@@ -1,13 +1,10 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
-from template.tools.base import Tool, ToolType
 from dotenv import load_dotenv
 import os
 import ast
-import json
-from pathlib import Path
+import re
 from typing import List, Dict, Any
-
-# Load environment variables
+from utils.prompts import TOOL_GENERATION, LOGIC_GENERATION, TOOL_GENERATION_TS, LOGIC_GENERATION_TS
 load_dotenv()
 
 class AICodeService:
@@ -21,37 +18,22 @@ class AICodeService:
         if not api_key:
             raise ValueError("GOOGLE_API_KEY or GEMINI_API_KEY environment variable is required")
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
-        self.prompts_file = Path(__file__).parent.parent / "template" / "prompts.json"
-        self._load_prompts()
-    
-    def _load_prompts(self):
-        """Loads prompts from template/prompts.json"""
-        if self.prompts_file.exists():
-            with open(self.prompts_file) as f:
-                prompts_data = json.load(f)
-                # Handle both list and dict formats
-                if isinstance(prompts_data, list):
-                    self.prompts = {item.get("name", "default"): item for item in prompts_data}
-                else:
-                    self.prompts = prompts_data
-        else:
-            self.prompts = {}
     
     def _clean_code_blocks(self, code: str) -> str:
         """Removes markdown code block markers from generated code"""
         code = code.strip()
-        
-        # Remove opening ```python or ```
+
+        # Remove opening ```python or ```typescript or ```
         if code.startswith("```"):
             lines = code.split("\n")
             if lines[0].startswith("```"):
                 lines = lines[1:]
             code = "\n".join(lines)
-        
+
         # Remove closing ```
         if code.endswith("```"):
             code = code[:-3].rstrip()
-        
+
         return code.strip()
     
     def generate_tool(self, requirements: str, existing_tools: List[Dict]) -> List[Dict[str, Any]]:
@@ -59,29 +41,15 @@ class AICodeService:
         Generates custom tool code based on user requirements.
         Tools are stored temporarily in Temp/{user_id}/tools/
         """
-        prompt_template = self.prompts.get("tool_generation", """
-        User requirements: {requirements}
-        Existing tools: {existing_tools}
-        
-        Generate Python tool class(es) following this pattern:
-        1. Inherit from Tool base class
-        2. Implement _determine_type() returning ToolType.ACTIVE or ToolType.REACTIVE
-        3. For ACTIVE: implement check() and run_loop()
-        4. For REACTIVE: implement execute()
-        5. Implement _get_config_schema()
-        
-        Return ONLY valid Python code, no explanations.
-        """)
-        
-        prompt = prompt_template.format(
+        prompt = TOOL_GENERATION.format(
             requirements=requirements,
-            existing_tools=[t.get('name', '') for t in existing_tools]
+            existing_tools=[t.get("name", "") for t in existing_tools],
         )
         
         response = self.llm.invoke(prompt)
         tool_code = response.content
         # Clean markdown code blocks
-        tool_code = self._clean_code_blocks(tool_code)
+        tool_code = self._clean_code_blocks(str(tool_code))
         
         # Parse and validate generated code
         tools = self._parse_tool_code(tool_code)
@@ -102,31 +70,15 @@ class AICodeService:
             else:
                 reactive_tools.append(tool)
         
-        prompt_template = self.prompts.get("logic_generation", """
-        Generate AgentLogic class for a NEAR agent.
-        
-        User Intent: {user_intent}
-        Active Tools: {active_tools}
-        Reactive Tools: {reactive_tools}
-        
-        The logic should:
-        1. Handle triggers from ACTIVE tools in on_trigger()
-        2. Execute REACTIVE tools based on conditions
-        3. Manage state between tool calls
-        4. Implement user's specific requirements
-        
-        Return complete Python code for AgentLogic class.
-        """)
-        
-        prompt = prompt_template.format(
+        prompt = LOGIC_GENERATION.format(
             user_intent=user_intent,
-            active_tools=[t.get('name', '') for t in active_tools],
-            reactive_tools=[t.get('name', '') for t in reactive_tools]
+            active_tools=[t.get("name", "") for t in active_tools],
+            reactive_tools=[t.get("name", "") for t in reactive_tools],
         )
         
         response = self.llm.invoke(prompt)
         # Clean markdown code blocks
-        logic_code = self._clean_code_blocks(response.content)
+        logic_code = self._clean_code_blocks(str(response.content))
         return logic_code
     
     def _parse_tool_code(self, code: str) -> List[Dict[str, Any]]:
@@ -161,3 +113,61 @@ class AICodeService:
                 return "reactive"
         # Default to reactive
         return "reactive"
+
+    # --- TypeScript agent generation ---
+
+    def generate_tool_ts(self, requirements: str, existing_tools: List[Dict]) -> List[Dict[str, Any]]:
+        """Generates custom TypeScript tool code based on user requirements."""
+        prompt = TOOL_GENERATION_TS.format(
+            requirements=requirements,
+            existing_tools=[t.get("name", "") for t in existing_tools],
+        )
+        response = self.llm.invoke(prompt)
+        tool_code = self._clean_code_blocks(str(response.content))
+        tools = self._parse_tool_code_ts(tool_code)
+        return tools
+
+    def generate_logic_ts(
+        self,
+        selected_tools: List[Dict],
+        user_intent: str,
+        agent_config: Dict,
+    ) -> str:
+        """Generates TypeScript logic.ts code that connects tools based on user intent."""
+        active_tools = []
+        reactive_tools = []
+        for tool in selected_tools:
+            desc = (tool.get("description") or "").upper()
+            code = (tool.get("code") or "").upper()
+            if "ACTIVE" in desc or "RUNLOOP" in code or "RUN_LOOP" in code or "export async function check" in code:
+                active_tools.append(tool)
+            else:
+                reactive_tools.append(tool)
+        prompt = LOGIC_GENERATION_TS.format(
+            user_intent=user_intent,
+            active_tools=[t.get("name", "") for t in active_tools],
+            reactive_tools=[t.get("name", "") for t in reactive_tools],
+        )
+        response = self.llm.invoke(prompt)
+        return self._clean_code_blocks(str(response.content))
+
+    def _parse_tool_code_ts(self, code: str) -> List[Dict[str, Any]]:
+        """Parses generated TypeScript and extracts tool name and code (regex/heuristics)."""
+        tools = []
+        # Try to find exported class or exported function/const that looks like a tool
+        class_match = re.search(r"export\s+(?:class|interface)\s+(\w+)", code)
+        if class_match:
+            name = class_match.group(1)
+            tool_type = "reactive"
+            if re.search(r"\brunLoop\b|\brun_loop\b|export\s+async\s+function\s+check\b", code):
+                tool_type = "active"
+            tools.append({"name": name, "code": code, "type": tool_type})
+        if not tools:
+            # Single file with export function check / execute / runLoop -> infer name from first export
+            fn_match = re.search(r"export\s+(?:async\s+)?function\s+(\w+)", code)
+            name = fn_match.group(1) if fn_match else "CustomTool"
+            tool_type = "reactive"
+            if "runLoop" in code or "async function check" in code:
+                tool_type = "active"
+            tools.append({"name": name, "code": code, "type": tool_type})
+        return tools if tools else [{"name": "CustomTool", "code": code, "type": "reactive"}]

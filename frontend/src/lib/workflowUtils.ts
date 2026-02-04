@@ -94,10 +94,11 @@ export function getStepIndexForStage(waitingStage: string): number {
   const stageToStepMap: Record<string, number> = {
     'tools': 1,           // Step 1: Tools
     'custom_tools': 1,    // Step 1: Tools (show custom tool section)
-    'prompt': 2,          // Step 2: Prompt (LLM step removed)
-    'clarification': 2,   // Step 2: Prompt (show clarification)
+    'prompt': 2,          // Step 2: Prompt
+    'clarification': 3,   // Step 3: Clarification
+    'env_variables': 4,   // Step 4: Environment Variables
     'tool_review': 1,     // Step 1: Tools (show review)
-    'code_review': 4,     // Step 4: Code (LLM step removed)
+    'code_review': 4,     // Step 4: Show env vars first when code ready; user advances to 5 after submit
   };
   
   return stageToStepMap[waitingStage] ?? 0;
@@ -141,11 +142,16 @@ function getLanguageFromFileName(fileName: string): string {
     'toml': 'toml',
     'env': 'plaintext',
     'md': 'markdown',
+    'rs': 'rust',
+    'lock': 'plaintext',
     'dockerfile': 'dockerfile',
   };
   
   if (fileName.toLowerCase() === 'dockerfile') {
     return 'dockerfile';
+  }
+  if (fileName.toLowerCase().endsWith('.development.local')) {
+    return 'plaintext';
   }
   
   return langMap[ext || ''] || 'plaintext';

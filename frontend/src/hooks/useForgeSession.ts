@@ -20,6 +20,9 @@ export interface SessionStatus {
   agent_id?: string;
 }
 
+// Polling interval in ms - only poll when workflow is processing (not waiting for user)
+const POLLING_INTERVAL = 5000;
+
 export function useForgeSession(userId: string = 'default_user') {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
@@ -27,13 +30,25 @@ export function useForgeSession(userId: string = 'default_user') {
   const [isLoading, setIsLoading] = useState(false);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Helper to determine if we should poll
+  const shouldPoll = useCallback((status: SessionStatus | null): boolean => {
+    if (!status) return false;
+    // Don't poll if waiting for user input or if agent is finalized
+    if (status.waiting_for_input) return false;
+    if (status.agent_id) return false;
+    // Only poll when workflow is actively processing
+    return true;
+  }, []);
+
   // Start a new session
   const startSession = useCallback(async () => {
     setIsLoading(true);
     try {
       const response = await api.startForgeSession(userId);
       setSessionId(response.session_id);
-      setIsPolling(true);
+      setSessionStatus(response);
+      // Only start polling if workflow is processing (not waiting for input)
+      setIsPolling(shouldPoll(response));
       toast.success('HITL workflow started', {
         description: 'Session initialized successfully',
       });
@@ -47,7 +62,7 @@ export function useForgeSession(userId: string = 'default_user') {
     } finally {
       setIsLoading(false);
     }
-  }, [userId]);
+  }, [userId, shouldPoll]);
 
   // Poll session status
   const pollStatus = useCallback(async (id: string) => {
@@ -55,9 +70,12 @@ export function useForgeSession(userId: string = 'default_user') {
       const status = await api.getSessionStatus(id);
       setSessionStatus(status);
       
-      // Stop polling if workflow is complete
-      if (!status.waiting_for_input && status.agent_id) {
-        setIsPolling(false);
+      // Update polling state based on new status
+      const shouldContinuePolling = shouldPoll(status);
+      setIsPolling(shouldContinuePolling);
+      
+      // Notify if agent is finalized
+      if (status.agent_id && !sessionStatus?.agent_id) {
         toast.success('Agent finalized successfully!', {
           description: `Agent ID: ${status.agent_id}`,
         });
@@ -66,29 +84,31 @@ export function useForgeSession(userId: string = 'default_user') {
       return status;
     } catch (error) {
       console.error('Failed to poll status:', error);
-      // Don't show error toast on every poll failure, just log it
       return null;
     }
-  }, []);
+  }, [shouldPoll, sessionStatus?.agent_id]);
 
-  // Start polling when session is active
+  // Start polling when session is active and workflow is processing
   useEffect(() => {
+    // Clear any existing interval
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+
     if (sessionId && isPolling) {
-      // Poll immediately
-      pollStatus(sessionId);
-      
-      // Then poll every 2 seconds
+      // Poll at intervals (don't poll immediately since we have status from last action)
       pollingIntervalRef.current = setInterval(() => {
         pollStatus(sessionId);
-      }, 2000);
-      
-      return () => {
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-          pollingIntervalRef.current = null;
-        }
-      };
+      }, POLLING_INTERVAL);
     }
+    
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
   }, [sessionId, isPolling, pollStatus]);
 
   // Submit tools
@@ -99,7 +119,8 @@ export function useForgeSession(userId: string = 'default_user') {
     try {
       const status = await api.submitTools(sessionId, tools);
       setSessionStatus(status);
-      setIsPolling(true);
+      // Only poll if workflow is still processing
+      setIsPolling(shouldPoll(status));
       return status;
     } catch (error) {
       console.error('Failed to submit tools:', error);
@@ -110,7 +131,7 @@ export function useForgeSession(userId: string = 'default_user') {
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, shouldPoll]);
 
   // Submit custom tools
   const submitCustomTools = useCallback(async (requirements: string) => {
@@ -120,7 +141,7 @@ export function useForgeSession(userId: string = 'default_user') {
     try {
       const status = await api.submitCustomTools(sessionId, requirements);
       setSessionStatus(status);
-      setIsPolling(true);
+      setIsPolling(shouldPoll(status));
       return status;
     } catch (error) {
       console.error('Failed to submit custom tools:', error);
@@ -131,7 +152,7 @@ export function useForgeSession(userId: string = 'default_user') {
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, shouldPoll]);
 
   // Submit prompt
   const submitPrompt = useCallback(async (prompt: string) => {
@@ -141,7 +162,7 @@ export function useForgeSession(userId: string = 'default_user') {
     try {
       const status = await api.submitPrompt(sessionId, prompt);
       setSessionStatus(status);
-      setIsPolling(true);
+      setIsPolling(shouldPoll(status));
       return status;
     } catch (error) {
       console.error('Failed to submit prompt:', error);
@@ -152,7 +173,7 @@ export function useForgeSession(userId: string = 'default_user') {
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, shouldPoll]);
 
   // Submit clarification
   const submitClarification = useCallback(async (answers: Array<{ question: string; answer: string }>) => {
@@ -162,7 +183,7 @@ export function useForgeSession(userId: string = 'default_user') {
     try {
       const status = await api.submitClarification(sessionId, answers);
       setSessionStatus(status);
-      setIsPolling(true);
+      setIsPolling(shouldPoll(status));
       return status;
     } catch (error) {
       console.error('Failed to submit clarification:', error);
@@ -173,7 +194,7 @@ export function useForgeSession(userId: string = 'default_user') {
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, shouldPoll]);
 
   // Submit tool review
   const submitToolReview = useCallback(async (changes: { add: string[]; remove: string[]; confirmed: boolean }) => {
@@ -183,7 +204,7 @@ export function useForgeSession(userId: string = 'default_user') {
     try {
       const status = await api.submitToolReview(sessionId, changes);
       setSessionStatus(status);
-      setIsPolling(true);
+      setIsPolling(shouldPoll(status));
       return status;
     } catch (error) {
       console.error('Failed to submit tool review:', error);
@@ -194,7 +215,28 @@ export function useForgeSession(userId: string = 'default_user') {
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, shouldPoll]);
+
+  // Submit environment variables
+  const submitEnvVariables = useCallback(async (envVariables: Record<string, string>) => {
+    if (!sessionId) throw new Error('No active session');
+    
+    setIsLoading(true);
+    try {
+      const status = await api.submitEnvVariables(sessionId, envVariables);
+      setSessionStatus(status);
+      setIsPolling(shouldPoll(status));
+      return status;
+    } catch (error) {
+      console.error('Failed to submit env variables:', error);
+      toast.error('Failed to submit env variables', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      });
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [sessionId, shouldPoll]);
 
   // Update code
   const updateCode = useCallback(async (filePath: string, content: string) => {
@@ -204,7 +246,7 @@ export function useForgeSession(userId: string = 'default_user') {
     try {
       const status = await api.updateCode(sessionId, filePath, content);
       setSessionStatus(status);
-      setIsPolling(true);
+      setIsPolling(shouldPoll(status));
       return status;
     } catch (error) {
       console.error('Failed to update code:', error);
@@ -215,7 +257,7 @@ export function useForgeSession(userId: string = 'default_user') {
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, shouldPoll]);
 
   // Finalize agent
   const finalizeAgent = useCallback(async () => {
@@ -225,7 +267,7 @@ export function useForgeSession(userId: string = 'default_user') {
     try {
       const status = await api.finalizeAgent(sessionId);
       setSessionStatus(status);
-      setIsPolling(false);
+      setIsPolling(false); // Always stop polling after finalize
       toast.success('Agent finalized!', {
         description: status.agent_id ? `Agent ID: ${status.agent_id}` : 'Agent created successfully',
       });
@@ -263,6 +305,7 @@ export function useForgeSession(userId: string = 'default_user') {
     submitPrompt,
     submitClarification,
     submitToolReview,
+    submitEnvVariables,
     updateCode,
     finalizeAgent,
     resetSession,

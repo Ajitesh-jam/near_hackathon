@@ -89,6 +89,16 @@ export const api = {
       { method: 'DELETE' }
     ),
 
+  getAgentFiles: (sessionId: string) =>
+    request<{ template_code: Record<string, string> }>(
+      `/forge/session/${sessionId}/agent-files`
+    ),
+
+  getSessionAgentFiles: (sessionId: string) =>
+    request<{ template_code: Record<string, string> }>(
+      `/forge/session/${sessionId}/agent-files`
+    ),
+
   // HITL Workflow endpoints
   startForgeSession: (userId: string) =>
     request<{ session_id: string; status: string }>('/forge/start', {
@@ -181,6 +191,17 @@ export const api = {
       body: JSON.stringify({ file_path: filePath, content }),
     }),
 
+  submitEnvVariables: (sessionId: string, envVariables: Record<string, string>) =>
+    request<{
+      session_id: string;
+      waiting_for_input: boolean;
+      waiting_stage: string;
+      current_step: string;
+    }>(`/forge/session/${sessionId}/env-variables`, {
+      method: 'POST',
+      body: JSON.stringify({ env_variables: envVariables }),
+    }),
+
   finalizeAgent: (sessionId: string) =>
     request<{
       session_id: string;
@@ -189,6 +210,22 @@ export const api = {
       current_step: string;
       agent_id?: string;
     }>(`/forge/session/${sessionId}/finalize`, {
+      method: 'POST',
+    }),
+
+  // Deploy agent
+  compileContract: (sessionId: string) =>
+    request<{ status: string }>(`/forge/session/${sessionId}/compile-contract`, {
+      method: 'POST',
+    }),
+
+  buildDockerImage: (sessionId: string) =>
+    request<{ status: string }>(`/forge/session/${sessionId}/build-docker-image`, {
+      method: 'POST',
+    }),
+
+  deployAgent: (sessionId: string) =>
+    request<{ status: string }>(`/forge/session/${sessionId}/deploy-agent`, {
       method: 'POST',
     }),
 };

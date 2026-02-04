@@ -4,8 +4,14 @@ import json
 import shutil
 import uuid
 from services.ai_code_service import AICodeService
-from services.tool_registry import ToolRegistry
-
+from utils.tool_registry import ToolRegistry
+# from template.agent_templates import (
+#     get_main_py_content,
+#     LOGIC_PY_DEFAULT,
+#     DOCKERFILE,
+#     REQUIREMENTS_TXT,
+# )
+from utils.helper_functions import _copy_template_to_agent
 class AgentService:
     """
     Combined service for:
@@ -17,6 +23,7 @@ class AgentService:
         self.agents_db.parent.mkdir(exist_ok=True)
         self.temp_dir = Path(__file__).parent.parent / "Temp"
         self.temp_dir.mkdir(exist_ok=True)
+        self.template_dir = Path(__file__).parent.parent / "template"
         self.ai_code = AICodeService()
         self.tool_registry = ToolRegistry()
     
@@ -88,7 +95,7 @@ class AgentService:
                     continue
                 
                 item_id = str(uuid.uuid4())
-                node = {
+                node: Dict[str, Any] = {
                     "id": item_id,
                     "name": item.name,
                     "type": "folder" if item.is_dir() else "file",
@@ -140,6 +147,7 @@ class AgentService:
         file_tree = build_file_tree(agent_dir)
         return {"files": file_tree}
     
+    
     # Template Generation
     def _generate_codebase(self, user_id: str, agent_id: str, tools: List[Dict], logic_code: str, config: Dict) -> Path:
         """Generates complete agent codebase structure"""
@@ -147,197 +155,117 @@ class AgentService:
         agent_dir.mkdir(parents=True, exist_ok=True)
         
         # Generate main.py, logic.py, tools/, requirements.txt, Dockerfile, .env.example
-        self._generate_main_py(agent_dir, tools)
-        self._generate_logic_py(agent_dir, logic_code)
-        self._copy_tools(agent_dir, tools)
-        self._generate_requirements(agent_dir)
-        self._generate_dockerfile(agent_dir)
-        self._generate_env_example(agent_dir, tools, config)
-        
+        # self._generate_main_py(agent_dir, tools)
+        # self._generate_logic_py(agent_dir, logic_code)
+        # self._generate_requirements(agent_dir)
+        # self._generate_dockerfile(agent_dir)
+        # self._generate_env_example(agent_dir, tools, config)
+        # # Copy contract/, LICENSE, .env.development.local from template
+        # self._copy_tools(agent_dir, tools)
+        # self._copy_template_extras(agent_dir)
+        template_code = _copy_template_to_agent(self.template_dir, agent_dir)
+
         return agent_dir
     
-    def _generate_main_py(self, agent_dir: Path, tools: List[Dict]):
-        """Generates main.py"""
-        active_imports = []
-        reactive_imports = []
+    # def _generate_main_py(self, agent_dir: Path, tools: List[Dict]):
+    #     """Generates main.py"""
+    #     active_imports = []
+    #     reactive_imports = []
         
-        for tool in tools:
-            tool_name = tool.get("name", "").lower()
-            # Infer tool type from description or code
-            desc = tool.get("description", "").upper()
-            code = tool.get("code", "").upper()
-            is_active = "ACTIVE" in desc or "ToolType.ACTIVE" in code or "return ToolType.ACTIVE" in code
-            class_name = "".join(word.capitalize() for word in tool_name.split("_"))
+    #     for tool in tools:
+    #         tool_name = tool.get("name", "").lower()
+    #         # Infer tool type from description or code
+    #         desc = tool.get("description", "").upper()
+    #         code = tool.get("code", "").upper()
+    #         is_active = "ACTIVE" in desc or "ToolType.ACTIVE" in code or "return ToolType.ACTIVE" in code
+    #         class_name = "".join(word.capitalize() for word in tool_name.split("_"))
             
-            if is_active:
-                active_imports.append(f"from tools.{tool_name} import {class_name}")
-            else:
-                reactive_imports.append(f"from tools.{tool_name} import {class_name}")
+    #         if is_active:
+    #             active_imports.append(f"from tools.{tool_name} import {class_name}")
+    #         else:
+    #             reactive_imports.append(f"from tools.{tool_name} import {class_name}")
         
-        main_py_content = f'''import asyncio
-import os
-from typing import Dict, List, Any
-{chr(10).join(active_imports) if active_imports else ""}
-{chr(10).join(reactive_imports) if reactive_imports else ""}
-from logic import AgentLogic
-
-class AgentManager:
-    def __init__(self):
-        self.config = self._load_config()
-        self.active_tools = self._init_active_tools()
-        self.reactive_tools = self._init_reactive_tools()
-        self.logic = AgentLogic(
-            active_tools=self.active_tools,
-            reactive_tools=self.reactive_tools
-        )
-        self.active_tasks: List[asyncio.Task] = []
+    #     main_py_content = get_main_py_content(active_imports, reactive_imports, tools)
+    #     (agent_dir / "main.py").write_text(main_py_content)
     
-    def _load_config(self) -> Dict[str, Any]:
-        return {{
-            "user_id": os.getenv("USER_ID", ""),
-            "agent_id": os.getenv("AGENT_ID", ""),
-            "selected_tools": {tools}
-        }}
+    # def _generate_logic_py(self, agent_dir: Path, logic_code: str):
+    #     """Writes AI-generated logic.py"""
+    #     if not logic_code.strip():
+    #         logic_code = LOGIC_PY_DEFAULT
+    #     (agent_dir / "logic.py").write_text(logic_code)
     
-    def _init_active_tools(self) -> Dict[str, Any]:
-        tools = {{}}
-        # Initialize selected active tools
-        return tools
-    
-    def _init_reactive_tools(self) -> Dict[str, Any]:
-        tools = {{}}
-        # Initialize selected reactive tools
-        return tools
-    
-    async def _handle_active_trigger(self, tool_name: str, result: Dict[str, Any]):
-        decision = await self.logic.on_trigger(tool_name, result)
-        if decision.get("action") == "execute":
-            reactive_tool = self.reactive_tools[decision["tool"]]
-            reactive_result = reactive_tool.execute(**decision["params"])
-            await self.logic.on_execution(decision, reactive_result)
-    
-    async def start(self):
-        print(f"Starting Agent")
-        for tool_name, tool in self.active_tools.items():
-            task = asyncio.create_task(
-                tool.run_loop(
-                    callback=lambda result, name=tool_name: self._handle_active_trigger(name, result)
-                )
-            )
-            self.active_tasks.append(task)
-        await asyncio.gather(*self.active_tasks)
-    
-    async def stop(self):
-        for tool in self.active_tools.values():
-            tool.is_running = False
-
-if __name__ == "__main__":
-    manager = AgentManager()
-    asyncio.run(manager.start())
-'''
-        (agent_dir / "main.py").write_text(main_py_content)
-    
-    def _generate_logic_py(self, agent_dir: Path, logic_code: str):
-        """Writes AI-generated logic.py"""
-        if not logic_code.strip():
-            # Default logic if AI didn't generate
-            logic_code = '''from typing import Dict, Any
-import asyncio
-
-class AgentLogic:
-    def __init__(self, active_tools: Dict, reactive_tools: Dict):
-        self.active_tools = active_tools
-        self.reactive_tools = reactive_tools
-        self.state = {}
-    
-    async def on_trigger(self, tool_name: str, result: Dict[str, Any]) -> Dict[str, Any]:
-        """Called when an ACTIVE tool triggers"""
-        return {"action": "wait"}
-    
-    async def on_execution(self, decision: Dict, result: Dict):
-        """Called after reactive tool executes"""
-        self.state["last_action"] = {"decision": decision, "result": result}
-'''
-        (agent_dir / "logic.py").write_text(logic_code)
-    
-    def _copy_tools(self, agent_dir: Path, tools: List[Dict]):
-        """Copies selected tools to agent directory"""
-        tools_dir = agent_dir / "tools"
-        tools_dir.mkdir(exist_ok=True)
-        (tools_dir / "__init__.py").write_text("")
+    # def _copy_tools(self, agent_dir: Path, tools: List[Dict]):
+    #     """Copies selected tools to agent directory"""
+    #     tools_dir = agent_dir / "tools"
         
-        # Copy base.py first (required dependency for all tools)
-        base_file = Path(__file__).parent.parent / "template" / "tools" / "base.py"
-        if base_file.exists():
-            (tools_dir / "base.py").write_text(base_file.read_text())
-        
-        for tool in tools:
-            tool_name = tool.get("name", "")
-            tool_code = tool.get("code", "")
+    #     for tool in tools:
+    #         tool_name = tool.get("name", "")
+    #         tool_code = tool.get("code", "")
             
-            if tool_code:
-                # AI-generated tool
-                (tools_dir / f"{tool_name.lower()}.py").write_text(tool_code)
-            else:
-                # Platform tool - copy from registry
-                try:
-                    platform_code = self.tool_registry.get_tool_code(tool_name)
-                    (tools_dir / f"{tool_name.lower()}.py").write_text(platform_code)
-                except:
-                    pass
+    #         if tool_code:
+    #             # AI-generated tool
+    #             (tools_dir / f"{tool_name.lower()}.py").write_text(tool_code)
+    #         else:
+    #             # Platform tool - copy from registry
+    #             try:
+    #                 platform_code = self.tool_registry.get_tool_code(tool_name)
+    #                 (tools_dir / f"{tool_name.lower()}.py").write_text(platform_code)
+    #             except:
+    #                 pass
+    # def _generate_requirements(self, agent_dir: Path):
+    #     """Generates requirements.txt"""
+    #     (agent_dir / "requirements.txt").write_text(REQUIREMENTS_TXT)
     
-    def _generate_requirements(self, agent_dir: Path):
-        """Generates requirements.txt"""
-        requirements = [
-            "asyncio",
-            "python-dotenv",
-        ]
-        (agent_dir / "requirements.txt").write_text("\n".join(requirements))
+    # def _generate_dockerfile(self, agent_dir: Path):
+    #     """Generates Dockerfile"""
+    #     (agent_dir / "Dockerfile").write_text(DOCKERFILE)
     
-    def _generate_dockerfile(self, agent_dir: Path):
-        """Generates Dockerfile"""
-        dockerfile_content = '''FROM python:3.11-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["python", "main.py"]
-'''
-        (agent_dir / "Dockerfile").write_text(dockerfile_content)
     
-    def _generate_env_example(self, agent_dir: Path, tools: List[Dict], config: Dict):
-        """Generates .env.example"""
-        env_lines = [
-            "USER_ID=your_user_id",
-            "AGENT_ID=your_agent_id",
-            "",
-            "# User's secrets (fill these in TEE)",
-        ]
-        
-        # Add tool-specific env vars
-        for tool in tools:
-            tool_name = tool.get("name", "").lower()
-            if "trade" in tool_name:
-                env_lines.extend([
-                    "EXCHANGE_API_KEY=your_api_key",
-                    "EXCHANGE_SECRET=your_secret",
-                ])
-            if "price" in tool_name or "crypto" in tool_name:
-                env_lines.extend([
-                    "PRICE_THRESHOLD=50000",
-                    "CHECK_INTERVAL=60",
-                ])
-        
-        (agent_dir / ".env.example").write_text("\n".join(env_lines))
+    # # Names to skip when copying template to agent (backend-only)
+    # _TEMPLATE_SKIP = frozenset({"agent_templates.py", "__pycache__"})
+
+    # def _copy_template_extras(self, agent_dir: Path):
+    #     """Copies all template contents to agent dir: contract/, LICENSE, .gitignore, docker-compose.yaml, sbom.cyclonedx.json, .env.development.local, etc."""
+    #     if not self.template_dir.exists():
+    #         return
+    #     for item in self.template_dir.iterdir():
+    #         if item.name in self._TEMPLATE_SKIP or item.name.endswith(".pyc"):
+    #             continue
+    #         dst = agent_dir / item.name
+    #         if item.is_file():
+    #             shutil.copy2(item, dst)
+    #         elif item.is_dir():
+    #             shutil.copytree(item, dst, dirs_exist_ok=True)
+
     
     def _load_agents(self) -> List[Dict]:
         if self.agents_db.exists():
             return json.loads(self.agents_db.read_text())
         return []
+    # def _generate_env_example(self, agent_dir: Path, tools: List[Dict], config: Dict):
+    #     """Generates .env.example"""
+    #     env_lines = [
+    #         "USER_ID=your_user_id",
+    #         "AGENT_ID=your_agent_id",
+    #         "",
+    #         "# User's secrets (fill these in TEE)",
+    #     ]
+        
+    #     # Add tool-specific env vars
+    #     for tool in tools:
+    #         tool_name = tool.get("name", "").lower()
+    #         if "trade" in tool_name:
+    #             env_lines.extend([
+    #                 "EXCHANGE_API_KEY=your_api_key",
+    #                 "EXCHANGE_SECRET=your_secret",
+    #             ])
+    #         if "price" in tool_name or "crypto" in tool_name:
+    #             env_lines.extend([
+    #                 "PRICE_THRESHOLD=50000",
+    #                 "CHECK_INTERVAL=60",
+    #             ])
+        
+    #     (agent_dir / ".env.example").write_text("\n".join(env_lines))
     
     def _save_agents(self, agents: List[Dict]):
         self.agents_db.write_text(json.dumps(agents, indent=2))

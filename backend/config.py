@@ -1,5 +1,10 @@
 import os
 import json
 
-MERCHANTS_FILE = os.path.join(".", "Data", "merchants.json")
-SPENDING_LIMIT_ETH = float(os.getenv("SPENDING_LIMIT_ETH", "1.0"))
+PORT_TO_START_AGENT = int(os.getenv("PORT_TO_START_AGENT", "7000"))
+
+
+class Config:
+    def __init__(self):
+        self.port_to_start_agent = int(os.getenv("PORT_TO_START_AGENT", "7000"))
+        self.docker_host = os.getenv("DOCKER_HOST", "ajitesh99")
