@@ -341,10 +341,11 @@ const BuildAgent = () => {
   };
 
   const handleFinalize = async () => {
-    if (sessionStatus?.waiting_stage !== 'code_review' && !sessionStatus?.agent_id) {
-      toast.error('Please wait for code generation to complete');
-      return;
-    }
+    // console.log('handleFinalize', sessionStatus);
+    // if (sessionStatus?.waiting_stage !== 'code_review' && !sessionStatus?.agent_id) {
+    //   toast.error('Please wait for code generation to complete');
+    //   return;
+    // }
     
     try {
       await finalizeAgentInWorkflow();
