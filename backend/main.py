@@ -183,10 +183,10 @@ async def get_agent_code(agent_id: str, user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading agent code: {str(e)}")
 
-
 @app.get("/agents/{agent_id}/files")
 async def get_agent_files(agent_id: str, user_id: str):
     """Get all agent files as flat path -> content (includes contract/, .env.development.local, docker-compose, etc.)"""
+    logger.info(f"Getting agent files for agent {agent_id} and user {user_id}")
     if agent_service is None:
         raise HTTPException(status_code=503, detail="Services not initialized.")
     try:
@@ -197,9 +197,8 @@ async def get_agent_files(agent_id: str, user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading agent files: {str(e)}")
 
-
 @app.get("/forge/session/{session_id}/agent-files")
-async def get_session_agent_files(session_id: str):
+async def get_session_agent_files_handler(session_id: str):
     """Get all files from the session's agent directory (for in-progress forge sessions)"""
     if forge_service is None:
         raise HTTPException(status_code=503, detail="Services not initialized.")
@@ -366,6 +365,7 @@ async def submit_tool_review(session_id: str, request: ToolReviewRequestSchema):
 @app.post("/forge/session/{session_id}/code-update")
 async def update_code(session_id: str, request: CodeUpdateRequestSchema):
     """Submit code edits"""
+    logger.info(f"Updating code for session {session_id} with file path {request.file_path}")
     if forge_service is None:
         raise HTTPException(status_code=503, detail="Services not initialized.")
     state = await forge_service.handle_update_code(session_id, request.file_path, request.content)

@@ -1,5 +1,8 @@
 import subprocess
-from typing import List, Dict, Any, Optional
+from langgraph.graph import StateGraph, END
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.checkpoint.memory import MemorySaver
+from typing import List, Dict, Any, Optional, cast
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 import os
@@ -7,6 +10,7 @@ import shutil
 from pathlib import Path
 from utils.tool_registry import ToolRegistry
 from services.ai_code_service import AICodeService
+from services.agent_service import AgentService
 from utils.code_validator import CodeValidator
 from utils.prompts import CLARIFY_INTENT, REVIEW_TOOLS
 from utils.schemas import ForgeState
@@ -36,22 +40,120 @@ class ForgeService:
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
         self.tool_registry = ToolRegistry()
         self.ai_code = AICodeService()
+        # self.agent_service = AgentService()
         self.code_validator = CodeValidator()
-        self.sessions: Dict[str, ForgeState] = {}
+        self.checkpointer = MemorySaver()
+        self.graph = self._build_graph()
 
-    def _get_session(self, session_id: str) -> Optional[ForgeState]:
-        return self.sessions.get(session_id)
-
-    def _require_session(self, session_id: str) -> ForgeState:
-        state = self.sessions.get(session_id)
-        if state is None:
-            raise ValueError(f"Session {session_id} not found")
-        return state
-
-    def _save_session(self, state: ForgeState) -> ForgeState:
-        """Persist and return the given session state."""
-        self.sessions[state["session_id"]] = state
-        return state
+    def _build_graph(self) -> CompiledStateGraph[ForgeState, None, ForgeState, ForgeState]:
+        workflow = StateGraph(ForgeState)
+        
+        # HITL workflow nodes
+        workflow.add_node("initialize_template", self._initialize_template)
+        workflow.add_node("wait_for_tools", self._wait_for_tools)
+        workflow.add_node("update_tools_state", self._update_tools_state)
+        workflow.add_node("add_platform_tools", self._add_platform_tools)
+        workflow.add_node("wait_for_custom_tools", self._wait_for_custom_tools)
+        workflow.add_node("update_custom_tools_state", self._update_custom_tools_state)
+        workflow.add_node("add_custom_tools", self._add_custom_tools)
+        workflow.add_node("wait_for_prompt", self._wait_for_prompt)
+        workflow.add_node("update_prompt_state", self._update_prompt_state)
+        workflow.add_node("clarify_intent", self._clarify_intent)
+        workflow.add_node("wait_for_clarification", self._wait_for_clarification)
+        workflow.add_node("update_clarification_state", self._update_clarification_state)
+        workflow.add_node("review_tools", self._review_tools)
+        workflow.add_node("wait_for_tool_review", self._wait_for_tool_review)
+        workflow.add_node("update_tool_review_state", self._update_tool_review_state)
+        workflow.add_node("apply_tool_changes", self._apply_tool_changes)
+        workflow.add_node("generate_logic", self._generate_logic)
+        workflow.add_node("validate_code", self._validate_code)
+        workflow.add_node("wait_for_code_review", self._wait_for_code_review)
+        workflow.add_node("update_code_state", self._update_code_state)
+        workflow.add_node("finalize_agent", self._finalize_agent)
+        
+        
+        # Entry point
+        workflow.set_entry_point("initialize_template")
+        
+        # Edges from initialize_template
+        workflow.add_edge("initialize_template", "wait_for_tools")
+        
+        # Edges from wait_for_tools (HITL - routes to END)
+        # External endpoint will call update_tools_state then resume
+        
+        # Edges from update_tools_state
+        workflow.add_edge("update_tools_state", "add_platform_tools")
+        
+        # Edges from add_platform_tools
+        workflow.add_conditional_edges(
+            "add_platform_tools",
+            self._should_wait_for_custom_tools,
+            {
+                "yes": "wait_for_custom_tools",
+                "no": "wait_for_prompt"
+            }
+        )
+        
+        # Edges from wait_for_custom_tools (HITL - routes to END)
+        workflow.add_edge("wait_for_custom_tools", END)
+        
+        # Edges from update_custom_tools_state
+        workflow.add_edge("update_custom_tools_state", "add_custom_tools")
+        
+        # Edges from add_custom_tools
+        workflow.add_edge("add_custom_tools", "wait_for_prompt")
+        
+        # Edges from wait_for_prompt (HITL - routes to END)
+        workflow.add_edge("wait_for_prompt", END)
+        
+        # Edges from update_prompt_state
+        workflow.add_edge("update_prompt_state", "clarify_intent")
+        
+        # Edges from clarify_intent - always go to clarification (compulsory step)
+        workflow.add_edge("clarify_intent", "wait_for_clarification")
+        
+        # Edges from wait_for_clarification (HITL - routes to END)
+        workflow.add_edge("wait_for_clarification", END)
+        
+        # Edges from update_clarification_state
+        workflow.add_edge("update_clarification_state", "review_tools")
+        
+        # Edges from review_tools - automatically apply changes and continue (no HITL)
+        workflow.add_conditional_edges(
+            "review_tools",
+            self._has_tool_changes,
+            {
+                "yes": "apply_tool_changes",
+                "no": "generate_logic"
+            }
+        )
+        
+        # Edges from apply_tool_changes
+        workflow.add_edge("apply_tool_changes", "generate_logic")
+        
+        # Edges from generate_logic
+        workflow.add_edge("generate_logic", "validate_code")
+        
+        # Edges from validate_code
+        workflow.add_conditional_edges(
+            "validate_code",
+            self._has_code_errors,
+            {
+                "yes": "wait_for_code_review",
+                "no": "finalize_agent"
+            }
+        )
+        
+        # Edges from wait_for_code_review (HITL - routes to END)
+        workflow.add_edge("wait_for_code_review", END)
+        
+        # Edges from update_code_state
+        workflow.add_edge("update_code_state", "validate_code")
+        
+        # Edges from finalize_agent
+        workflow.add_edge("finalize_agent", END)
+        
+        return workflow.compile(checkpointer=self.checkpointer)
         
     # HITL Node Implementations
     def _initialize_template(self, state: ForgeState) -> ForgeState:
@@ -59,10 +161,11 @@ class ForgeService:
         user_id = state["agent_config"].get("user_id", "default")
         agent_id = state["agent_config"].get("agent_id") or f"agent_{state['session_id'][:8]}"
         
+        # Create agent directory
+        # agent_dir = self.agent_service.temp_dir / user_id / agent_id
+        # agent_dir.mkdir(parents=True, exist_ok=True)
+        # state["agent_dir_path"] = str(agent_dir)
         agent_dir = Path(__file__).parent.parent / "Temp" / user_id / agent_id
-        agent_dir.mkdir(parents=True, exist_ok=True)
-        state["agent_dir_path"] = str(agent_dir)
-        state["agent_id"] = agent_id
         
         # Initialize template_code with basic structure
         template_code: Dict[str, str] = _copy_template_to_agent(TEMPLATE_DIR, agent_dir)        
@@ -426,15 +529,16 @@ class ForgeService:
         # state["agent_id"] = agent_id
         state["current_step"] = "finalized"
         state["waiting_for_input"] = False
-        logger.info(f"Finalized agent {agent_id}  tools and logic code")
+        logger.info(f"Finalized agent {agent_id}  tools and final state\n\n {state}")
         return state
     
     def execute_command(self, session_id: str, command: str) -> Optional[Dict[str, Any]]:
         """Execute command in the agent directory; logs stream to server terminal."""
-        state = self._get_session(session_id)
-        if not state:
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
             return None
-        agent_dir = state.get("agent_dir_path", "")
+        agent_dir = current_state.values.get("agent_dir_path", "")
         if not agent_dir:
             return None
         agent_path = Path(agent_dir)
@@ -456,10 +560,11 @@ class ForgeService:
 
     async def compile_contract(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Compile contract"""
-        state = self._get_session(session_id)
-        if not state:
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
             return None
-        agent_dir = state.get("agent_dir_path", "")
+        agent_dir = current_state.values.get("agent_dir_path", "")
         if not agent_dir:
             return None
         agent_path = Path(agent_dir)
@@ -470,10 +575,11 @@ class ForgeService:
     
     async def build_docker_image(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Compile contract, then build and push Docker image; logs stream to server terminal."""
-        state = self._get_session(session_id)
-        if not state:
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
             return None
-        agent_dir = state.get("agent_dir_path", "")
+        agent_dir = current_state.values.get("agent_dir_path", "")
         if not agent_dir:
             return None
         agent_path = Path(agent_dir)
@@ -485,21 +591,23 @@ class ForgeService:
     
     def get_session_agent_files(self, session_id: str) -> Optional[Dict[str, str]]:
         """Returns all files from the session's agent directory (contract/, .env, docker-compose, etc.)"""
-        state = self._get_session(session_id)
-        if not state:
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
             return None
-        agent_dir = state.get("agent_dir_path", "")
+        agent_dir = current_state.values.get("agent_dir_path", "")
         if not agent_dir:
             return None
-        return _read_all_files_from_dir(Path(agent_dir))
+        return _read_all_files_from_dir(path=agent_dir)
     
     
     # Legacy method for backward compatibility
     async def process(self, user_message: str, user_id: str) -> Dict[str, Any]:
-        """Legacy entry point - runs a single-pass workflow without HITL."""
-        session_id = "legacy"
-        state: ForgeState = ForgeState(
-            session_id=session_id,
+        """Legacy entry point - use start_session instead"""
+        # This method is kept for backward compatibility
+        # New HITL workflow should use start_session
+        initial_state = ForgeState(
+            session_id="",
             user_message=user_message,
             chat_history=[],
             selected_tools=[],
@@ -519,15 +627,12 @@ class ForgeService:
             finalize=False,
             docker_tag=""
         )
-        # Minimal flow: init template and validate empty logic/template
-        state = self._initialize_template(state)
-        state = self._validate_code(state)
-        self._save_session(state)
-        return dict(state)
+        final_state = await self.graph.ainvoke(initial_state)
+        return final_state
     
     async def start_session(self, session_id: str, user_id: str) -> Dict[str, Any]:
         """Starts a new HITL session"""
-        state: ForgeState = ForgeState(
+        initial_state = ForgeState(
             session_id=session_id,
             user_message="",
             chat_history=[],
@@ -548,145 +653,241 @@ class ForgeService:
             finalize=False,
             docker_tag=""
         )
-        # Initialize template and then wait for tools selection
-        state = self._initialize_template(state)
-        state = self._wait_for_tools(state)
-        self._save_session(state)
-        return dict(state)
+        
+        config: Any = {"configurable": {"thread_id": session_id}}
+        
+        async for event in self.graph.astream(initial_state, config=config):
+            if "waiting_for_input" in event and event.get("waiting_for_input"):
+                break
+        
+        return await self.get_state(session_id)
     
     async def get_state(self, session_id: str) -> Dict[str, Any]:
-        """Gets current state from in-memory session storage"""
-        state = self._get_session(session_id)
-        return dict(state) if state is not None else {}
+        """Gets current state from checkpoint"""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        state = self.graph.get_state(config)
+        if state:
+            return state.values
+        return {}
+    
+    async def resume_workflow(self, session_id: str) -> Dict[str, Any]:
+        """Resumes workflow from checkpoint by routing to the appropriate update node if needed"""
+        config: Any = {"configurable": {"thread_id": session_id}}
+        
+        # Get current state to determine if we need to route to an update node
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            raise ValueError(f"Session {session_id} not found")
+        
+        waiting_stage = current_state.values.get("waiting_stage")
+        state_values = cast(ForgeState, current_state.values.copy())
+        
+        # Map waiting_stage to the corresponding update node function
+        # Only invoke if we're at END and waiting_for_input was just set to False
+        update_node_map = {
+            "tools": self._update_tools_state,
+            "custom_tools": self._update_custom_tools_state,
+            "prompt": self._update_prompt_state,
+            "clarification": self._update_clarification_state,
+            "tool_review": self._update_tool_review_state,
+            "code_review": self._update_code_state,
+        }
+        
+        # If we have a waiting_stage but waiting_for_input is False, we need to invoke the update node
+        if waiting_stage in update_node_map and not state_values.get("waiting_for_input", True):
+            # Manually invoke the update node since we're at END
+            node_func = update_node_map[waiting_stage]
+            updated_state = node_func(state_values)
+            
+            # Update the checkpoint with the new state
+            self.graph.update_state(config, updated_state)
+        
+        # Now stream from the updated checkpoint
+        async for event in self.graph.astream(None, config=config):
+            # Check if we've reached a HITL node or completed
+            if isinstance(event, dict):
+                # Check each node's output
+                for node_name, node_state in event.items():
+                    if isinstance(node_state, dict) and node_state.get("waiting_for_input"):
+                        break
+            # Also check if workflow completed (empty event)
+            if not event:
+                break
+        
+        return await self.get_state(session_id)
     
     async def handle_submit_tools(self, session_id: str, tools: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Handle tool submission endpoint logic"""
-        state = self._require_session(session_id)
-        state["selected_tools"] = tools
-        state["waiting_for_input"] = False
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
         
-        state = self._update_tools_state(state)
-        state = self._add_platform_tools(state)
+        state_values = cast(ForgeState, current_state.values.copy())
+        state_values["selected_tools"] = tools
+        state_values["waiting_for_input"] = False
+        
+        updated_state = self._update_tools_state(state_values)
+        updated_state = self._add_platform_tools(updated_state)
         
         # Check if we need custom tools
-        if self._should_wait_for_custom_tools(state) == "no":
-            state = self._wait_for_prompt(state)
+        if self._should_wait_for_custom_tools(updated_state) == "no":
+            updated_state = self._wait_for_prompt(updated_state)
         else:
-            state = self._wait_for_custom_tools(state)
+            updated_state = self._wait_for_custom_tools(updated_state)
         
-        self._save_session(state)
-        return dict(state)
+        # Update checkpoint
+        self.graph.update_state(config, updated_state)
+        
+        return await self.get_state(session_id)
     
     async def handle_submit_custom_tools(self, session_id: str, requirements: str) -> Optional[Dict[str, Any]]:
         """Handle custom tool requirements submission"""
-        state = self._require_session(session_id)
-        state["custom_tool_requirements"] = requirements
-        state["waiting_for_input"] = False
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
         
-        state = self._update_custom_tools_state(state)
-        state = self._add_custom_tools(state)
-        state = self._wait_for_prompt(state)
+        state_values = cast(ForgeState, current_state.values.copy())
+        state_values["custom_tool_requirements"] = requirements
+        state_values["waiting_for_input"] = False
         
-        self._save_session(state)
-        return dict(state)
+        updated_state = self._update_custom_tools_state(state_values)
+        self.graph.update_state(config, updated_state)
+        
+        await self.resume_workflow(session_id)
+        return await self.get_state(session_id)
     
     async def handle_submit_prompt(self, session_id: str, prompt: str) -> Optional[Dict[str, Any]]:
         """Handle user prompt submission"""
-        state = self._require_session(session_id)
-        state["user_message"] = prompt
-        state["waiting_for_input"] = False
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
         
-        # update_prompt_state → clarify_intent → wait_for_clarification
-        state = self._update_prompt_state(state)
-        state = self._clarify_intent(state)
-        state = self._wait_for_clarification(state)
+        state_values = cast(ForgeState, current_state.values.copy())
+        state_values["user_message"] = prompt
+        state_values["waiting_for_input"] = False
         
-        self._save_session(state)
-        return dict(state)
+        # Manually invoke the chain: update_prompt_state → clarify_intent → wait_for_clarification
+        updated_state = self._update_prompt_state(state_values)
+        updated_state = self._clarify_intent(updated_state)
+        updated_state = self._wait_for_clarification(updated_state)
+        
+        # Update checkpoint
+        self.graph.update_state(config, updated_state)
+        
+        return await self.get_state(session_id)
     
     async def handle_submit_clarification(self, session_id: str, answers: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Handle clarification answers submission"""
-        state = self._require_session(session_id)
-        state["user_clarifications"] = answers
-        state["waiting_for_input"] = False
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
         
-        # update_clarification_state → review_tools → apply changes → generate_logic → validate_code → wait_for_code_review/finalize
-        state = self._update_clarification_state(state)
-        state = self._review_tools(state)
+        state_values = cast(ForgeState, current_state.values.copy())
+        state_values["user_clarifications"] = answers
+        state_values["waiting_for_input"] = False
+        
+        # Manually invoke the chain: update_clarification_state → review_tools → apply changes → generate_logic → validate_code → wait_for_code_review/finalize
+        updated_state = self._update_clarification_state(state_values)
+        
+        # Continue automatically: review_tools → apply changes → generate_logic → validate_code
+        updated_state = self._review_tools(updated_state)
         
         # Apply tool changes if needed
-        if self._has_tool_changes(state) == "yes":
-            state = self._apply_tool_changes(state)
+        if self._has_tool_changes(updated_state) == "yes":
+            updated_state = self._apply_tool_changes(updated_state)
         
         # Generate logic
-        state = self._generate_logic(state)
+        updated_state = self._generate_logic(updated_state)
         
         # Validate code
-        state = self._validate_code(state)
+        updated_state = self._validate_code(updated_state)
         
         # Check if there are errors - if yes, wait for code review, if no, finalize
-        if self._has_code_errors(state) == "yes":
-            state = self._wait_for_code_review(state)
+        if self._has_code_errors(updated_state) == "yes":
+            updated_state = self._wait_for_code_review(updated_state)
         else:
-            state = self._finalize_agent(state)
+            updated_state = self._finalize_agent(updated_state)
         
-        self._save_session(state)
-        return dict(state)
+        # Update checkpoint
+        self.graph.update_state(config, updated_state)
+        
+        return await self.get_state(session_id)
     
     async def handle_submit_tool_review(self, session_id: str, changes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Handle tool review confirmation/rejection"""
-        state = self._require_session(session_id)
-        state["tool_changes"] = changes
-        state["waiting_for_input"] = False
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
         
-        # update_tool_review_state → apply changes → generate_logic → validate_code → wait_for_code_review/finalize
-        state = self._update_tool_review_state(state)
-        if self._has_tool_changes(state) == "yes":
-            state = self._apply_tool_changes(state)
-        state = self._generate_logic(state)
-        state = self._validate_code(state)
-        if self._has_code_errors(state) == "yes":
-            state = self._wait_for_code_review(state)
-        else:
-            state = self._finalize_agent(state)
+        state_values = cast(ForgeState, current_state.values.copy())
+        state_values["tool_changes"] = changes
+        state_values["waiting_for_input"] = False
         
-        self._save_session(state)
-        return dict(state)
+        # Manually invoke update_tool_review_state since we're at END
+        updated_state = self._update_tool_review_state(state_values)
+        
+        # Update checkpoint
+        self.graph.update_state(config, updated_state)
+        
+        await self.resume_workflow(session_id)
+        return await self.get_state(session_id)
     
     async def handle_update_code(self, session_id: str, file_path: str, content: str) -> Optional[Dict[str, Any]]:
         """Handle code update submission"""
-        state = self._require_session(session_id)
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        
+        state_values = cast(ForgeState, current_state.values.copy())
         # Update template_code
-        if "template_code" not in state:
-            state["template_code"] = {}
-        state["template_code"][file_path] = content
-        state["waiting_for_input"] = False
+        if "template_code" not in state_values:
+            state_values["template_code"] = {}
+        state_values["template_code"][file_path] = content
+        state_values["waiting_for_input"] = False
         
-        # update_code_state → validate_code → wait_for_code_review/finalize
-        state = self._update_code_state(state)
-        state = self._validate_code(state)
-        if self._has_code_errors(state) == "yes":
-            state = self._wait_for_code_review(state)
-        else:
-            state = self._finalize_agent(state)
+        # Manually invoke update_code_state since we're at END
+        updated_state = self._update_code_state(state_values)
         
-        self._save_session(state)
-        return dict(state)
+        # Update checkpoint
+        self.graph.update_state(config, updated_state)
+        
+        await self.resume_workflow(session_id)
+        return await self.get_state(session_id)
     
     async def handle_finalize_agent(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Handle agent finalization"""
-        state = self._require_session(session_id)
-        state["finalize"] = True
-        state["waiting_for_input"] = False
-        state = self._finalize_agent(state)
-        self._save_session(state)
-        return dict(state)
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        
+        state_values = cast(ForgeState, current_state.values.copy())
+        state_values["finalize"] = True
+        state_values["waiting_for_input"] = False
+        
+        # Manually invoke finalize_agent since we're at END
+        updated_state = self._finalize_agent(state_values)
+        
+        # Update checkpoint
+        self.graph.update_state(config, updated_state)
+        
+        return await self.get_state(session_id)
     
     async def handle_env_variables(self, session_id: str, env_variables: Dict[str, str]) -> Optional[Dict[str, Any]]:
         """Handle environment variables submission"""
-        state = self._require_session(session_id)
-        # add env variables directly to agent_dir/.env.development.local
-        agent_dir = Path(state.get("agent_dir_path", ""))
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
+            return None
+        
+        # add env varibales directly to agent_dir/.env.development.local
+        agent_dir = Path(current_state.values.get("agent_dir_path", ""))
         if not agent_dir:
             raise ValueError(f"Agent directory not found for session {session_id}")
         env_file = agent_dir / ".env.development.local"
@@ -705,10 +906,9 @@ class ForgeService:
             f.write(f"  NEAR_CONTRACT_CODEHASH={env_variables.get('NEAR_CONTRACT_CODEHASH', '')}\n")
             f.write(f"  PHALA_API_KEY={env_variables.get('PHALA_API_KEY', '')}\n")
             f.write(f"  NEAR_AI_API_KEY={env_variables.get('NEAR_AI_API_KEY', '')}\n")
-            f.write(f"  DOCKER_TAG={DOCKER_HOST}/{state.get('agent_dir_path', 'client-shade-agent')[-8:]} \n")
+            f.write(f"  DOCKER_TAG={DOCKER_HOST}/{current_state.values.get('agent_dir_path', 'client-shade-agent')[-8:]} \n")
             
-        self._save_session(state)
-        return dict(state)
+        return await self.get_state(session_id)
         
     async def handle_compile_contract(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Compile contract"""
@@ -726,10 +926,11 @@ class ForgeService:
 
     async def handle_deploy_agent(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Compile contract, build Docker image, deploy agent via deply.sh --compile; logs stream to server terminal."""
-        state = self._get_session(session_id)
-        if not state:
+        config: Any = {"configurable": {"thread_id": session_id}}
+        current_state = self.graph.get_state(config)
+        if not current_state:
             return None
-        agent_dir = state.get("agent_dir_path", "")
+        agent_dir = current_state.values.get("agent_dir_path", "")
         if not agent_dir:
             return None
         agent_path = Path(agent_dir)
