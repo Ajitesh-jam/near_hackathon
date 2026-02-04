@@ -170,32 +170,32 @@ async def create_agent(request: AgentGenerationRequestSchema) -> AgentGeneration
         path=f"Temp/{request.user_id}/{agent_id}"
     )
 
-@app.get("/agents/{agent_id}/code")
-async def get_agent_code(agent_id: str, user_id: str):
-    """Get the complete code structure for an agent"""
-    if agent_service is None:
-        raise HTTPException(status_code=503, detail="Services not initialized.")
-    try:
-        code_structure = agent_service.get_agent_code(user_id, agent_id)
-        return code_structure
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading agent code: {str(e)}")
+# @app.get("/agents/{agent_id}/code")
+# async def get_agent_code(agent_id: str, user_id: str):
+#     """Get the complete code structure for an agent"""
+#     if agent_service is None:
+#         raise HTTPException(status_code=503, detail="Services not initialized.")
+#     try:
+#         code_structure = agent_service.get_agent_code(user_id, agent_id)
+#         return code_structure
+#     except ValueError as e:
+#         raise HTTPException(status_code=404, detail=str(e))
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error reading agent code: {str(e)}")
 
-@app.get("/agents/{agent_id}/files")
-async def get_agent_files(agent_id: str, user_id: str):
-    """Get all agent files as flat path -> content (includes contract/, .env.development.local, docker-compose, etc.)"""
-    logger.info(f"Getting agent files for agent {agent_id} and user {user_id}")
-    if agent_service is None:
-        raise HTTPException(status_code=503, detail="Services not initialized.")
-    try:
-        files = agent_service.get_agent_files_flat(user_id, agent_id)
-        return {"template_code": files}
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading agent files: {str(e)}")
+# @app.get("/agents/{agent_id}/files")
+# async def get_agent_files(agent_id: str, user_id: str):
+#     """Get all agent files as flat path -> content (includes contract/, .env.development.local, docker-compose, etc.)"""
+#     logger.info(f"Getting agent files for agent {agent_id} and user {user_id}")
+#     if agent_service is None:
+#         raise HTTPException(status_code=503, detail="Services not initialized.")
+#     try:
+#         files = agent_service.get_agent_files_flat(user_id, agent_id)
+#         return {"template_code": files}
+#     except ValueError as e:
+#         raise HTTPException(status_code=404, detail=str(e))
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error reading agent files: {str(e)}")
 
 @app.get("/forge/session/{session_id}/agent-files")
 async def get_session_agent_files_handler(session_id: str):

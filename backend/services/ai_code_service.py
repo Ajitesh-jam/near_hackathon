@@ -6,6 +6,8 @@ import re
 from typing import List, Dict, Any
 from utils.prompts import TOOL_GENERATION, LOGIC_GENERATION, TOOL_GENERATION_TS, LOGIC_GENERATION_TS
 load_dotenv()
+import logging
+logger = logging.getLogger(__name__)
 
 class AICodeService:
     """
@@ -69,6 +71,10 @@ class AICodeService:
                 active_tools.append(tool)
             else:
                 reactive_tools.append(tool)
+        
+        
+        logger.info(f"Active tools: {active_tools}")
+        logger.info(f"Reactive tools: {reactive_tools}")
         
         prompt = LOGIC_GENERATION.format(
             user_intent=user_intent,
@@ -143,6 +149,8 @@ class AICodeService:
                 active_tools.append(tool)
             else:
                 reactive_tools.append(tool)
+        logger.info(f"Active tools: {active_tools}")
+        logger.info(f"Reactive tools: {reactive_tools}")
         prompt = LOGIC_GENERATION_TS.format(
             user_intent=user_intent,
             active_tools=[t.get("name", "") for t in active_tools],
