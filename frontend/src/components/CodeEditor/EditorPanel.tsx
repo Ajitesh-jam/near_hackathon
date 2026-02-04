@@ -1,8 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useRef } from 'react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-python';
-import 'prismjs/components/prism-typescript';
 import 'prismjs/components/prism-javascript';
 import 'prismjs/components/prism-rust';
 import 'prismjs/components/prism-json';
@@ -50,6 +49,47 @@ const getLanguage = (filename: string): string => {
   
   return langMap[ext || ''] || 'markdown';
 };
+
+// Register TypeScript grammar with our Prism instance (component IIFE often gets undefined Prism in ESM bundles)
+function registerTypeScriptGrammar() {
+  if (Prism.languages.typescript) return;
+  const P = Prism;
+  P.languages.typescript = P.languages.extend('javascript', {
+    'class-name': {
+      pattern: /(\b(?:class|extends|implements|instanceof|interface|new|type)\s+)(?!keyof\b)(?!\s)[_$a-zA-Z\xA0-\uFFFF](?:(?!\s)[$\w\xA0-\uFFFF])*(?:\s*<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?/,
+      lookbehind: true,
+      greedy: true,
+      inside: null as Record<string, unknown> | null,
+    },
+    builtin: /\b(?:Array|Function|Promise|any|boolean|console|never|number|string|symbol|unknown)\b/,
+  });
+  (P.languages.typescript!.keyword as RegExp[]).push(
+    /\b(?:abstract|declare|is|keyof|readonly|require)\b/,
+    /\b(?:asserts|infer|interface|module|namespace|type)\b(?=\s*(?:[{_$a-zA-Z\xA0-\uFFFF]|$))/,
+    /\btype\b(?=\s*(?:[\{*]|$))/
+  );
+  delete (P.languages.typescript as Record<string, unknown>)['parameter'];
+  delete (P.languages.typescript as Record<string, unknown>)['literal-property'];
+  const typeInside = P.languages.extend('typescript', {});
+  delete (typeInside as Record<string, unknown>)['class-name'];
+  ((P.languages.typescript as Record<string, unknown>)['class-name'] as Record<string, unknown>).inside = typeInside;
+  P.languages.insertBefore('typescript', 'function', {
+    decorator: {
+      pattern: /@[$\w\xA0-\uFFFF]+/,
+      inside: { at: { pattern: /^@/, alias: 'operator' }, function: /^[\s\S]+/ },
+    },
+    'generic-function': {
+      pattern: /#?(?!\s)[_$a-zA-Z\xA0-\uFFFF](?:(?!\s)[$\w\xA0-\uFFFF])*\s*<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>(?=\s*\()/,
+      greedy: true,
+      inside: {
+        function: /^#?(?!\s)[_$a-zA-Z\xA0-\uFFFF](?:(?!\s)[$\w\xA0-\uFFFF])*/,
+        generic: { pattern: /<[\s\S]+/, alias: 'class-name', inside: typeInside },
+      },
+    },
+  });
+  P.languages.ts = P.languages.typescript;
+}
+registerTypeScriptGrammar();
 
 const highlight = (code: string, language: string): string => {
   const grammar = Prism.languages[language];

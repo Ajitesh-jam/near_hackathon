@@ -52,4 +52,32 @@ The logic should:
 
 Return complete Python code for AgentLogic class."""
 
+# --- TypeScript agent prompts ---
+
+TOOL_GENERATION_TS = """User requirements: {requirements}
+Existing tools: {existing_tools}
+
+Generate TypeScript tool(s) that implement the Tool pattern from src/tools/base.ts.
+1. Use types from "./base" (ToolType, CheckResult, ExecuteResult, ConfigSchema, ToolConfig).
+2. For ACTIVE tools: export async function check(config: ToolConfig): Promise<CheckResult> and export async function runLoop(config, callback).
+3. For REACTIVE tools: export function execute(...args, config: ToolConfig): ExecuteResult.
+4. Export function getConfigSchema(): ConfigSchema.
+5. Add a JSDoc comment at the top describing the tool (e.g. "ACTIVE tool: ..." or "REACTIVE tool: ...").
+
+Return ONLY valid TypeScript code, no explanations. Single file per tool. Use export."""
+
+LOGIC_GENERATION_TS = """Generate a TypeScript module for a NEAR agent (src/logic.ts) that will be imported by responder.ts.
+
+User Intent: {user_intent}
+Active Tools: {active_tools}
+Reactive Tools: {reactive_tools}
+
+The module should:
+1. Export an async function runLogic() or similar that implements the agent behavior.
+2. Use the provided tools (import from "./tools/...") - call check/runLoop for active tools, execute for reactive tools as needed.
+3. Optionally use agentView and agentCall from "@neardefi/shade-agent-js" for contract interaction.
+4. Match the pattern of responder.ts: loop, fetch data (agentView), call AI or tools, then agentCall if needed.
+
+Return complete TypeScript code for src/logic.ts only. Use ES modules (import/export). No markdown wrapper."""
+
 WILL_AGENT_TEMPLATE = """You are a helpful assistant that can answer questions and help with tasks. You will be given a time to monitor, a beneficiary address, an amount to send, and terms and conditions. You will need to monitor the time to monitor and send the amount to the beneficiary address if the terms and conditions are met. You will need to return the result of the monitoring."""

@@ -1,10 +1,21 @@
-FROM python:3.11-slim
-
+# Stage 1: Dependencies
+FROM node:22-alpine AS deps
 WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --only=production
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Stage 2: Build
+FROM node:22-alpine AS builder
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --include=dev
+COPY src/ ./src/
+RUN npm run build
 
-COPY . .
-
-CMD ["python", "main.py"]
+# Stage 3: Production
+FROM node:22-alpine AS runner
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY package.json ./
+CMD ["npm", "start"]

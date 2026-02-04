@@ -89,9 +89,9 @@ export const api = {
       { method: 'DELETE' }
     ),
 
-  getAgentFiles: (agentId: string, userId: string) =>
+  getAgentFiles: (sessionId: string) =>
     request<{ template_code: Record<string, string> }>(
-      `/agents/${agentId}/files?user_id=${userId}`
+      `/forge/session/${sessionId}/agent-files`
     ),
 
   getSessionAgentFiles: (sessionId: string) =>

@@ -18,11 +18,14 @@ logger = logging.getLogger(__name__)
 from config import Config
 config = Config()
 
-# Path to tools base.py (Tool, ToolType) - used by all generated/platform tools
+# Path to tools storage - TypeScript tools for generated agent
 BASE_TOOLS_DIR = Path(__file__).resolve().parent.parent / "utils" / "tools_storage"
-TOOLS_BASE_PY_PATH = BASE_TOOLS_DIR / "base.py"
+TOOLS_BASE_TS_PATH = BASE_TOOLS_DIR / "base.ts"
 # Template dir for contract, LICENSE, .gitignore, docker-compose, sbom, etc.
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "template"
+# TypeScript agent paths
+SRC_TOOLS_DIR = "src/tools"
+LOGIC_TS_PATH = "src/logic.ts"
 
 DOCKER_HOST = config.docker_host
 
@@ -57,8 +60,10 @@ class ForgeService:
     def _initialize_template(self, state: ForgeState) -> ForgeState:
         """Creates initial template codebase structure"""
         user_id = state["agent_config"].get("user_id", "default")
-        agent_id = state["agent_config"].get("agent_id") or f"agent_{state['session_id'][:8]}"
+        agent_id = f"agent_{state['session_id'][:8]}"
         
+        logger.info(f"Initializing template for agent {agent_id}")
+        logger.info(f"directory: {Path(__file__).parent.parent / 'Temp' / user_id / agent_id}")
         agent_dir = Path(__file__).parent.parent / "Temp" / user_id / agent_id
         agent_dir.mkdir(parents=True, exist_ok=True)
         state["agent_dir_path"] = str(agent_dir)
@@ -88,33 +93,32 @@ class ForgeService:
         return state
     
     def _add_platform_tools(self, state: ForgeState) -> ForgeState:
-        """Adds selected tools to agent directory"""
-        tools_dir_path = Path(state["agent_dir_path"]) / "tools"
-        tools_dir_path.mkdir(exist_ok=True)
-        
-        # # Ensure base.py is present (Tool, ToolType) so tool imports work
-        # if TOOLS_BASE_PY_PATH.exists() and "tools/base.py" not in state.get("template_code", {}):
-        #     base_content = TOOLS_BASE_PY_PATH.read_text()
-        #     state["template_code"]["tools/base.py"] = base_content
-        #     (tools_dir_path / "base.py").write_text(base_content)
-        
+        """Adds selected TypeScript tools to agent directory (src/tools/)"""
+        tools_dir_path = Path(state["agent_dir_path"]) / "src" / "tools"
+        tools_dir_path.mkdir(parents=True, exist_ok=True)
+
+        # Ensure base.ts is present so tool imports work
+        if TOOLS_BASE_TS_PATH.exists() and f"{SRC_TOOLS_DIR}/base.ts" not in state.get("template_code", {}):
+            base_content = TOOLS_BASE_TS_PATH.read_text(encoding="utf-8")
+            state["template_code"][f"{SRC_TOOLS_DIR}/base.ts"] = base_content
+            (tools_dir_path / "base.ts").write_text(base_content, encoding="utf-8")
+
         for tool in state.get("selected_tools", []):
             tool_name = tool.get("name", "")
             tool_code = tool.get("code", "")
-            
+            key = f"{SRC_TOOLS_DIR}/{tool_name.lower()}.ts"
+
             if tool_code:
-                # AI-generated tool
-                state["template_code"][f"tools/{tool_name.lower()}.py"] = tool_code
-                (tools_dir_path / f"{tool_name.lower()}.py").write_text(tool_code)
+                state["template_code"][key] = tool_code
+                (tools_dir_path / f"{tool_name.lower()}.ts").write_text(tool_code, encoding="utf-8")
             else:
-                # Platform tool - copy from registry
                 try:
                     platform_code = self.tool_registry.get_tool_code(tool_name)
-                    state["template_code"][f"tools/{tool_name.lower()}.py"] = platform_code
-                    (tools_dir_path / f"{tool_name.lower()}.py").write_text(platform_code)
-                except:
+                    state["template_code"][key] = platform_code
+                    (tools_dir_path / f"{tool_name.lower()}.ts").write_text(platform_code, encoding="utf-8")
+                except Exception:
                     pass
-        
+
         state["current_step"] = "tools_added"
         logger.info(f"Added {len(state['selected_tools'])} tools to agent {state['agent_id']}")
         return state
@@ -140,38 +144,35 @@ class ForgeService:
         return state
     
     def _add_custom_tools(self, state: ForgeState) -> ForgeState:
-        """Generates and adds custom tools"""
+        """Generates and adds custom TypeScript tools to src/tools/"""
         requirements = state.get("custom_tool_requirements", "")
         if not requirements:
             return state
-        
-        generated = self.ai_code.generate_tool(
+
+        generated = self.ai_code.generate_tool_ts(
             requirements=requirements,
             existing_tools=state["selected_tools"]
         )
         state["generated_tools"] = generated
-        
-        # Add to temp registry and template_code
+
         user_id = state["agent_config"].get("user_id", "default")
-        tools_dir_path = Path(state["agent_dir_path"]) / "tools"
+        tools_dir_path = Path(state["agent_dir_path"]) / "src" / "tools"
         tools_dir_path.mkdir(parents=True, exist_ok=True)
-        
-        # Ensure base.py is present so custom tools can import from .base
-        if TOOLS_BASE_PY_PATH.exists() and "tools/base.py" not in state.get("template_code", {}):
-            base_content = TOOLS_BASE_PY_PATH.read_text()
-            state["template_code"]["tools/base.py"] = base_content
-            (tools_dir_path / "base.py").write_text(base_content)
-        
+
+        if TOOLS_BASE_TS_PATH.exists() and f"{SRC_TOOLS_DIR}/base.ts" not in state.get("template_code", {}):
+            base_content = TOOLS_BASE_TS_PATH.read_text(encoding="utf-8")
+            state["template_code"][f"{SRC_TOOLS_DIR}/base.ts"] = base_content
+            (tools_dir_path / "base.ts").write_text(base_content, encoding="utf-8")
+
         for tool in generated:
             self.tool_registry.add_temp_tool(user_id, tool)
             tool_name = tool.get("name", "").lower()
             tool_code = tool.get("code", "")
             if tool_code:
-                state["template_code"][f"tools/{tool_name}.py"] = tool_code
-                (tools_dir_path / f"{tool_name}.py").write_text(tool_code)
-                
-                logger.info(f'Added custom tool at path {tools_dir_path / f"{tool_name}.py"} with code\n\n {tool_code}')
-        
+                state["template_code"][f"{SRC_TOOLS_DIR}/{tool_name}.ts"] = tool_code
+                (tools_dir_path / f"{tool_name}.ts").write_text(tool_code, encoding="utf-8")
+                logger.info(f'Added custom tool at {tools_dir_path / f"{tool_name}.ts"}')
+
         state["current_step"] = "custom_tools_added"
         logger.info(f'Added {len(generated)} custom tools')
         return state
@@ -340,40 +341,52 @@ class ForgeService:
                 t for t in state["selected_tools"]
                 if t.get("name", "") not in remove_tools
             ]
-            # Remove from template_code
             for tool_name in remove_tools:
-                key = f"tools/{tool_name.lower()}.py"
+                key = f"{SRC_TOOLS_DIR}/{tool_name.lower()}.ts"
                 if key in state["template_code"]:
                     del state["template_code"][key]
-        
-        # Add tools (would need to fetch from registry)
+                agent_tool_path = Path(state["agent_dir_path"]) / key
+                if agent_tool_path.exists():
+                    agent_tool_path.unlink()
+
+        # Add tools from registry
         if add_tools:
             available_tools = self.tool_registry.list_tools()
             tools_list = available_tools.get("tools", [])
+            tools_dir_path = Path(state["agent_dir_path"]) / "src" / "tools"
+            tools_dir_path.mkdir(parents=True, exist_ok=True)
             for tool_name in add_tools:
                 tool = next((t for t in tools_list if t.get("name", "").lower() == tool_name.lower()), None)
                 if tool:
                     state["selected_tools"].append(tool)
+                    code = tool.get("code", "")
+                    if code:
+                        key = f"{SRC_TOOLS_DIR}/{tool_name.lower()}.ts"
+                        state["template_code"][key] = code
+                        (tools_dir_path / f"{tool_name.lower()}.ts").write_text(code, encoding="utf-8")
         
         state["current_step"] = "tool_changes_applied"
         return state
     
     def _generate_logic(self, state: ForgeState) -> ForgeState:
-        """Generates logic.py code"""
+        """Generates TypeScript logic (src/logic.ts)"""
         all_tools = state["selected_tools"] + state.get("generated_tools", [])
-        logic_code = self.ai_code.generate_logic(
+        logic_code = self.ai_code.generate_logic_ts(
             selected_tools=all_tools,
             user_intent=state["user_message"],
             agent_config=state["agent_config"]
         )
         state["logic_code"] = logic_code
-        state["template_code"]["logic.py"] = logic_code
+        state["template_code"][LOGIC_TS_PATH] = logic_code
+        logic_path = Path(state["agent_dir_path"]) / LOGIC_TS_PATH
+        logic_path.parent.mkdir(parents=True, exist_ok=True)
+        logic_path.write_text(logic_code, encoding="utf-8")
         state["current_step"] = "logic_generated"
         return state
     
     def _validate_code(self, state: ForgeState) -> ForgeState:
-        """Runs code validation"""
-        errors = self.code_validator.validate_template(state["template_code"])
+        """Runs TypeScript code validation (tsc --noEmit)"""
+        errors = self.code_validator.validate_template_ts(state["template_code"])
         state["code_errors"] = [e.to_dict() for e in errors]
         state["current_step"] = "code_validated"
         return state
@@ -429,7 +442,7 @@ class ForgeService:
         #     file_full_path.write_text(content)
         
         # all_tools = state.get("selected_tools", []) + state.get("generated_tools", [])
-        # logic_code = state.get("logic_code") or template_code.get("logic.py", "")
+        # logic_code = state.get("logic_code") or template_code.get(LOGIC_TS_PATH, "")
         # user_id = state.get("agent_config", {}).get("user_id", "default")
         # agent_config = state.get("agent_config", {})
         agent_id = state.get("agent_id")
@@ -623,7 +636,7 @@ class ForgeService:
         state["user_message"] = prompt
         state["waiting_for_input"] = False
 
-        logger.info(f"User prompt submitted: {prompt}\n\n The state is \n\n{state}\n\n")
+        logger.info(f"User prompt submitted: {prompt}\n\n ")
         
         # update_prompt_state → clarify_intent → wait_for_clarification
         state = self._update_prompt_state(state)

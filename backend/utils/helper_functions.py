@@ -50,28 +50,27 @@ def _copy_template_to_agent(template_dir: Path, agent_dir: Path) -> Dict[str, st
 
     return template_code
 
-def _read_all_files_from_dir(path: Path, prefix: str = "") -> Dict[str, str]:
-    """Recursively read all files from a directory into flat path -> content.
-
-    Includes dotfiles, contract/, etc. Skips __pycache__ and .pyc files.
+def _read_all_files_from_dir(path: "Path", prefix: str = "") -> Dict[str, str]:
+    """
+    Recursively read all files from a directory, including subdirectories, into a flat mapping:
+    path/to/file -> content. Includes dotfiles and all files and folders (e.g., contract/).
+    Skips __pycache__ directories and .pyc files.
     """
     result: Dict[str, str] = {}
     if not path.exists() or not path.is_dir():
         return result
 
     for item in sorted(path.iterdir()):
-        rel_path = f"{prefix}/{item.name}" if prefix else item.name
-        if item.name == "__pycache__" or item.name.endswith(".pyc"):
+        if item.name == "node_modules":
             continue
         if item.is_file():
+            rel_path = f"{prefix}/{item.name}" if prefix else item.name
             try:
-                content = item.read_text(encoding="utf-8")
+                content = item.read_text(encoding="utf-8")  
                 result[rel_path] = content
-            except UnicodeDecodeError:
-                result[rel_path] = "# Binary file - cannot display"
             except Exception as e:
                 result[rel_path] = f"# Error reading file: {e}"
         elif item.is_dir():
-            result.update(_read_all_files_from_dir(item, rel_path))
-
+            rel_dir = f"{prefix}/{item.name}" if prefix else item.name
+            result.update(_read_all_files_from_dir(item, rel_dir))
     return result

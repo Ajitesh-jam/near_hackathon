@@ -109,6 +109,7 @@ class CustomToolRequestSchema(BaseModel):
 
 class PromptSubmissionRequestSchema(BaseModel):
     prompt: str
+    want_clarification: bool = False
 
 class ClarificationResponseSchema(BaseModel):
     answers: List[Dict[str, Any]]  # [{"question": str, "answer": str}]

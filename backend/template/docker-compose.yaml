@@ -27,7 +27,7 @@ services:
       API_PORT: "3140"
     platform: linux/amd64 # Explicitly set for TDX
     # shade-agent-app-image
-    image: ${DOCKER_TAG}@sha256:64dde8ee429e7fff65363924682826986d0404b4874bb951f47f6efcc796e840
+    image: ajitesh99/python-ai-dao@sha256:ad3fe4027f208b3a7034cc01d9f2c234d466ecaae826a935c44d72fe990f9bd1
     container_name: shade-agent-app
     ports:
       - "3000:3000"

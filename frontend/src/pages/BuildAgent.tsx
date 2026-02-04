@@ -161,7 +161,7 @@ const BuildAgent = () => {
       try {
         let templateCode: Record<string, string> = {};
         if (sessionStatus.agent_id) {
-          const res = await api.getAgentFiles(sessionStatus.agent_id, 'default_user');
+          const res = await api.getAgentFiles(sessionId);
           templateCode = res.template_code || {};
         } else {
           const res = await api.getSessionAgentFiles(sessionId);

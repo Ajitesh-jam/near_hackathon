@@ -1,9 +1,10 @@
-from langchain_google_genai import ChatGoogleGenerativeAI   
+from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 import os
 import ast
+import re
 from typing import List, Dict, Any
-from utils.prompts import TOOL_GENERATION, LOGIC_GENERATION
+from utils.prompts import TOOL_GENERATION, LOGIC_GENERATION, TOOL_GENERATION_TS, LOGIC_GENERATION_TS
 load_dotenv()
 
 class AICodeService:
@@ -21,18 +22,18 @@ class AICodeService:
     def _clean_code_blocks(self, code: str) -> str:
         """Removes markdown code block markers from generated code"""
         code = code.strip()
-        
-        # Remove opening ```python or ```
+
+        # Remove opening ```python or ```typescript or ```
         if code.startswith("```"):
             lines = code.split("\n")
             if lines[0].startswith("```"):
                 lines = lines[1:]
             code = "\n".join(lines)
-        
+
         # Remove closing ```
         if code.endswith("```"):
             code = code[:-3].rstrip()
-        
+
         return code.strip()
     
     def generate_tool(self, requirements: str, existing_tools: List[Dict]) -> List[Dict[str, Any]]:
@@ -112,3 +113,61 @@ class AICodeService:
                 return "reactive"
         # Default to reactive
         return "reactive"
+
+    # --- TypeScript agent generation ---
+
+    def generate_tool_ts(self, requirements: str, existing_tools: List[Dict]) -> List[Dict[str, Any]]:
+        """Generates custom TypeScript tool code based on user requirements."""
+        prompt = TOOL_GENERATION_TS.format(
+            requirements=requirements,
+            existing_tools=[t.get("name", "") for t in existing_tools],
+        )
+        response = self.llm.invoke(prompt)
+        tool_code = self._clean_code_blocks(str(response.content))
+        tools = self._parse_tool_code_ts(tool_code)
+        return tools
+
+    def generate_logic_ts(
+        self,
+        selected_tools: List[Dict],
+        user_intent: str,
+        agent_config: Dict,
+    ) -> str:
+        """Generates TypeScript logic.ts code that connects tools based on user intent."""
+        active_tools = []
+        reactive_tools = []
+        for tool in selected_tools:
+            desc = (tool.get("description") or "").upper()
+            code = (tool.get("code") or "").upper()
+            if "ACTIVE" in desc or "RUNLOOP" in code or "RUN_LOOP" in code or "export async function check" in code:
+                active_tools.append(tool)
+            else:
+                reactive_tools.append(tool)
+        prompt = LOGIC_GENERATION_TS.format(
+            user_intent=user_intent,
+            active_tools=[t.get("name", "") for t in active_tools],
+            reactive_tools=[t.get("name", "") for t in reactive_tools],
+        )
+        response = self.llm.invoke(prompt)
+        return self._clean_code_blocks(str(response.content))
+
+    def _parse_tool_code_ts(self, code: str) -> List[Dict[str, Any]]:
+        """Parses generated TypeScript and extracts tool name and code (regex/heuristics)."""
+        tools = []
+        # Try to find exported class or exported function/const that looks like a tool
+        class_match = re.search(r"export\s+(?:class|interface)\s+(\w+)", code)
+        if class_match:
+            name = class_match.group(1)
+            tool_type = "reactive"
+            if re.search(r"\brunLoop\b|\brun_loop\b|export\s+async\s+function\s+check\b", code):
+                tool_type = "active"
+            tools.append({"name": name, "code": code, "type": tool_type})
+        if not tools:
+            # Single file with export function check / execute / runLoop -> infer name from first export
+            fn_match = re.search(r"export\s+(?:async\s+)?function\s+(\w+)", code)
+            name = fn_match.group(1) if fn_match else "CustomTool"
+            tool_type = "reactive"
+            if "runLoop" in code or "async function check" in code:
+                tool_type = "active"
+            tools.append({"name": name, "code": code, "type": tool_type})
+        return tools if tools else [{"name": "CustomTool", "code": code, "type": "reactive"}]

@@ -1,6 +1,10 @@
 import ast
-from typing import List, Dict, Any, Optional
+import json
+import re
+import subprocess
+import tempfile
 from pathlib import Path
+from typing import List, Dict, Any, Optional
 
 class CodeValidationError:
     """Represents a code validation error"""
@@ -161,19 +165,125 @@ class CodeValidator:
     def validate_template(self, template_code: Dict[str, str]) -> List[CodeValidationError]:
         """
         Validates all files in a template codebase.
-        
+
         Args:
             template_code: Dictionary mapping file paths to code content
-        
+
         Returns:
             List of all validation errors across all files
         """
         all_errors = []
-        
+
         for file_path, code in template_code.items():
             # Only validate Python files
             if file_path.endswith('.py'):
                 errors = self.validate_code(file_path, code, template_code)
                 all_errors.extend(errors)
-        
+
         return all_errors
+
+    # --- TypeScript validation ---
+
+    def validate_code_ts(
+        self,
+        file_path: str,
+        code: str,
+        template_code: Optional[Dict[str, str]] = None,
+    ) -> List[CodeValidationError]:
+        """
+        Validates TypeScript by running tsc in a temp dir with template_code.
+        Returns list of validation errors for the given file (and related).
+        """
+        all_ts = {k: v for k, v in (template_code or {}).items() if k.endswith(".ts")}
+        if file_path not in all_ts:
+            all_ts[file_path] = code
+        return self.validate_template_ts(all_ts)
+
+    def validate_template_ts(self, template_code: Dict[str, str]) -> List[CodeValidationError]:
+        """
+        Validates all TypeScript files by writing to a temp dir and running tsc --noEmit.
+        """
+        errors: List[CodeValidationError] = []
+        ts_files = {k: v for k, v in template_code.items() if k.endswith(".ts")}
+        if not ts_files:
+            return errors
+
+        with tempfile.TemporaryDirectory(prefix="ts_validate_") as tmpdir:
+            root = Path(tmpdir)
+            for rel_path, content in ts_files.items():
+                path = root / rel_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+
+            tsconfig = {
+                "compilerOptions": {
+                    "target": "ES2022",
+                    "module": "commonjs",
+                    "moduleResolution": "node",
+                    "strict": True,
+                    "skipLibCheck": True,
+                    "noEmit": True,
+                    "esModuleInterop": True,
+                    "allowSyntheticDefaultImports": True,
+                    "forceConsistentCasingInFileNames": True,
+                    "resolveJsonModule": True,
+                },
+                "include": ["src/**/*"],
+                "exclude": ["node_modules"],
+            }
+            (root / "tsconfig.json").write_text(json.dumps(tsconfig, indent=2), encoding="utf-8")
+
+            try:
+                result = subprocess.run(
+                    ["npx", "tsc", "--noEmit"],
+                    cwd=str(root),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                errors.append(
+                    CodeValidationError(
+                        file_path="",
+                        error_type="syntax",
+                        message="TypeScript validation timed out",
+                        line_number=None,
+                    )
+                )
+                return errors
+            except FileNotFoundError:
+                errors.append(
+                    CodeValidationError(
+                        file_path="",
+                        error_type="syntax",
+                        message="npx/tsc not found; install TypeScript to validate",
+                        line_number=None,
+                    )
+                )
+                return errors
+
+            # tsc writes diagnostics to stderr
+            output = (result.stderr or "") + (result.stdout or "")
+            # Format: "src/index.ts(10,5): error TS2307: Cannot find module 'x'."
+            pattern = re.compile(
+                r"([^(]+)\((\d+),(\d+)\):\s*error\s+(TS\d+):\s*(.+)",
+                re.MULTILINE,
+            )
+            for match in pattern.finditer(output):
+                file_path = match.group(1).strip()
+                line_number = int(match.group(2))
+                _col = int(match.group(3))
+                _code = match.group(4)
+                message = match.group(5).strip()
+                # Normalize path to use forward slashes
+                file_path = Path(file_path).as_posix()
+                errors.append(
+                    CodeValidationError(
+                        file_path=file_path,
+                        error_type="syntax",
+                        message=message,
+                        line_number=line_number,
+                    )
+                )
+
+        return errors
