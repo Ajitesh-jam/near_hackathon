@@ -92,11 +92,11 @@ class ForgeService:
         tools_dir_path = Path(state["agent_dir_path"]) / "tools"
         tools_dir_path.mkdir(exist_ok=True)
         
-        # Ensure base.py is present (Tool, ToolType) so tool imports work
-        if TOOLS_BASE_PY_PATH.exists() and "tools/base.py" not in state.get("template_code", {}):
-            base_content = TOOLS_BASE_PY_PATH.read_text()
-            state["template_code"]["tools/base.py"] = base_content
-            (tools_dir_path / "base.py").write_text(base_content)
+        # # Ensure base.py is present (Tool, ToolType) so tool imports work
+        # if TOOLS_BASE_PY_PATH.exists() and "tools/base.py" not in state.get("template_code", {}):
+        #     base_content = TOOLS_BASE_PY_PATH.read_text()
+        #     state["template_code"]["tools/base.py"] = base_content
+        #     (tools_dir_path / "base.py").write_text(base_content)
         
         for tool in state.get("selected_tools", []):
             tool_name = tool.get("name", "")
@@ -233,13 +233,13 @@ class ForgeService:
         if confirmation not in " ".join(questions):
             questions.append(confirmation)
         
-        # If no questions extracted, add default ones
-        if not questions:
-            questions = [
-                "Can you confirm the beneficiary details for the will?",
-                "What should happen if you become inactive?",
-                confirmation
-            ]
+        # # If no questions extracted, add default ones
+        # if not questions:
+        #     questions = [
+        #         "Can you confirm the beneficiary details for the will?",
+        #         "What should happen if you become inactive?",
+        #         confirmation
+        #     ]
         
         # Store summary and questions
         state["user_clarifications"] = [
@@ -390,6 +390,17 @@ class ForgeService:
         state["current_step"] = "waiting_for_code_review"
         return state
     
+    def correct_code(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Correct code"""
+        state = self._get_session(session_id)
+        if not state:
+            return None
+        pass
+    
+    
+    
+        return dict(state)
+    
     def _update_code_state(self, state: ForgeState) -> ForgeState:
         """Updates state with code edits"""
         state["waiting_for_input"] = False
@@ -493,6 +504,22 @@ class ForgeService:
             return None
         return _read_all_files_from_dir(Path(agent_dir))
     
+    def generate_draft_code(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Generate logic code"""
+        state = self._get_session(session_id)
+        if not state:
+            return None
+         # Generate logic
+        state = self._generate_logic(state)
+        # Validate code
+        state = self._validate_code(state)
+        # Check if there are errors - if yes, wait for code review, if no, finalize
+        if self._has_code_errors(state) == "yes":
+            logger.info(f"Code errors found: {state['code_errors']}")
+            state = self._wait_for_code_review(state)
+            logger.info(f"Code corrected")
+            
+        return dict(state)
     
     # Legacy method for backward compatibility
     async def process(self, user_message: str, user_id: str) -> Dict[str, Any]:
@@ -517,7 +544,7 @@ class ForgeService:
             agent_dir_path="",
             custom_tool_requirements="",
             finalize=False,
-            docker_tag=""
+            docker_tag="",
         )
         # Minimal flow: init template and validate empty logic/template
         state = self._initialize_template(state)
@@ -546,7 +573,7 @@ class ForgeService:
             agent_dir_path="",
             custom_tool_requirements="",
             finalize=False,
-            docker_tag=""
+            docker_tag="",
         )
         # Initialize template and then wait for tools selection
         state = self._initialize_template(state)
@@ -590,16 +617,21 @@ class ForgeService:
         self._save_session(state)
         return dict(state)
     
-    async def handle_submit_prompt(self, session_id: str, prompt: str) -> Optional[Dict[str, Any]]:
+    async def handle_submit_prompt(self, session_id: str, prompt: str, want_clarification: bool = False) -> Optional[Dict[str, Any]]:
         """Handle user prompt submission"""
         state = self._require_session(session_id)
         state["user_message"] = prompt
         state["waiting_for_input"] = False
+
+        logger.info(f"User prompt submitted: {prompt}\n\n The state is \n\n{state}\n\n")
         
         # update_prompt_state → clarify_intent → wait_for_clarification
         state = self._update_prompt_state(state)
-        state = self._clarify_intent(state)
-        state = self._wait_for_clarification(state)
+        if want_clarification:
+            state = self._clarify_intent(state)
+            state = self._wait_for_clarification(state)
+        else:
+            self.generate_draft_code(session_id)
         
         self._save_session(state)
         return dict(state)
@@ -617,18 +649,7 @@ class ForgeService:
         # Apply tool changes if needed
         if self._has_tool_changes(state) == "yes":
             state = self._apply_tool_changes(state)
-        
-        # Generate logic
-        state = self._generate_logic(state)
-        
-        # Validate code
-        state = self._validate_code(state)
-        
-        # Check if there are errors - if yes, wait for code review, if no, finalize
-        if self._has_code_errors(state) == "yes":
-            state = self._wait_for_code_review(state)
-        else:
-            state = self._finalize_agent(state)
+        self.generate_draft_code(session_id)
         
         self._save_session(state)
         return dict(state)
@@ -652,7 +673,44 @@ class ForgeService:
         
         self._save_session(state)
         return dict(state)
-    
+
+    async def handle_env_variables(self, session_id: str, env_variables: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        """Handle environment variables submission"""
+        state = self._require_session(session_id)
+        
+        # add env variables directly to agent_dir/.env.development.local
+        agent_dir = Path(state.get("agent_dir_path", ""))
+        if not agent_dir:
+            raise ValueError(f"Agent directory not found for session {session_id}")
+        env_file = agent_dir / ".env.development.local"
+        if not env_file.exists():
+            raise ValueError(f"Env file not found for session {session_id}")
+        
+        env_content = {}
+        # read the env file
+        with open(env_file, "r") as f:
+            for line in f:
+                key, value = line.strip().split("=")
+                env_content[key] = value
+        
+        logger.info(f"Updating env variables in {env_file}")
+        logger.info(f"config.docker_host: {config}")
+        
+        next_account_id = env_variables.get('NEAR_ACCOUNT_ID', 'ajitesh-1.testnet')
+        with open(env_file, "w") as f:
+            for key, value in env_content.items():
+                f.write(f"{key}={value}\n")
+            f.write(f"NEAR_ACCOUNT_ID={env_variables.get('NEAR_ACCOUNT_ID', '')}\n")
+            f.write(f"NEAR_SEED_PHRASE={env_variables.get('NEAR_SEED_PHRASE', '')}\n")
+            f.write(f"NEXT_PUBLIC_contractId={env_variables.get('NEXT_PUBLIC_contractId', f'ac-sandbox.{next_account_id}')}\n")
+            f.write(f"NEAR_CONTRACT_CODEHASH={env_variables.get('NEAR_CONTRACT_CODEHASH', '')}\n")
+            f.write(f"PHALA_API_KEY={env_variables.get('PHALA_API_KEY', '')}\n")
+            f.write(f"NEAR_AI_API_KEY={env_variables.get('NEAR_AI_API_KEY', '')}\n")
+            f.write(f"DOCKER_TAG={DOCKER_HOST}/{state.get('agent_dir_path', 'client-shade-agent')[-8:]} \n")
+            
+        self._save_session(state)
+        return dict(state)
+         
     async def handle_update_code(self, session_id: str, file_path: str, content: str) -> Optional[Dict[str, Any]]:
         """Handle code update submission"""
         state = self._require_session(session_id)
@@ -660,15 +718,16 @@ class ForgeService:
         if "template_code" not in state:
             state["template_code"] = {}
         state["template_code"][file_path] = content
-        state["waiting_for_input"] = False
         
-        # update_code_state → validate_code → wait_for_code_review/finalize
-        state = self._update_code_state(state)
-        state = self._validate_code(state)
-        if self._has_code_errors(state) == "yes":
-            state = self._wait_for_code_review(state)
-        else:
-            state = self._finalize_agent(state)
+        # update the code in the agent directory
+        agent_dir = Path(state.get("agent_dir_path", ""))
+        if not agent_dir:
+            raise ValueError(f"Agent directory not found for session {session_id}")
+        file_path_path = agent_dir / file_path
+        if not file_path_path.exists():
+            return None
+        file_path_path.write_text(content)
+        logger.info(f"Updated code in {file_path_path}")
         
         self._save_session(state)
         return dict(state)
@@ -678,38 +737,12 @@ class ForgeService:
         state = self._require_session(session_id)
         state["finalize"] = True
         state["waiting_for_input"] = False
-        state = self._finalize_agent(state)
+        state["current_step"] = "finalized"
+        agent_id = state.get("agent_id")
+        logger.info(f"Finalized agent {agent_id}  tools and logic code")
         self._save_session(state)
         return dict(state)
-    
-    async def handle_env_variables(self, session_id: str, env_variables: Dict[str, str]) -> Optional[Dict[str, Any]]:
-        """Handle environment variables submission"""
-        state = self._require_session(session_id)
-        # add env variables directly to agent_dir/.env.development.local
-        agent_dir = Path(state.get("agent_dir_path", ""))
-        if not agent_dir:
-            raise ValueError(f"Agent directory not found for session {session_id}")
-        env_file = agent_dir / ".env.development.local"
-        if not env_file.exists():
-            return None
-        
-        logger.info(f"Adding env variables to {env_file}")
-        logger.info(f"config.docker_host: {config}")
-        
-        next_account_id = env_variables.get('NEAR_ACCOUNT_ID', 'ajitesh-1.testnet')
-        with open(env_file, "a") as f:
-            
-            f.write(f"  NEAR_ACCOUNT_ID={env_variables.get('NEAR_ACCOUNT_ID', '')}\n")
-            f.write(f"  NEAR_SEED_PHRASE={env_variables.get('NEAR_SEED_PHRASE', '')}\n")
-            f.write(f"  NEXT_PUBLIC_contractId={env_variables.get('NEXT_PUBLIC_contractId', f'ac-sandbox.{next_account_id}')}\n")
-            f.write(f"  NEAR_CONTRACT_CODEHASH={env_variables.get('NEAR_CONTRACT_CODEHASH', '')}\n")
-            f.write(f"  PHALA_API_KEY={env_variables.get('PHALA_API_KEY', '')}\n")
-            f.write(f"  NEAR_AI_API_KEY={env_variables.get('NEAR_AI_API_KEY', '')}\n")
-            f.write(f"  DOCKER_TAG={DOCKER_HOST}/{state.get('agent_dir_path', 'client-shade-agent')[-8:]} \n")
-            
-        self._save_session(state)
-        return dict(state)
-        
+  
     async def handle_compile_contract(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Compile contract"""
         result = await self.compile_contract(session_id)

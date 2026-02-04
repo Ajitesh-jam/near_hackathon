@@ -362,6 +362,39 @@ async def submit_tool_review(session_id: str, request: ToolReviewRequestSchema):
         agent_id=state.get("agent_id")
     )
 
+@app.post("/forge/session/{session_id}/env-variables")
+async def submit_env_variables(session_id: str, request: EnvVariablesRequestSchema):
+    """Submit environment variables"""
+    if forge_service is None:
+        raise HTTPException(status_code=503, detail="Services not initialized.")
+    
+    # check if user has passed all the required env variables
+    if not request.env_variables:
+        raise HTTPException(status_code=400, detail="Env variables are required")
+    if not request.env_variables.get("NEAR_ACCOUNT_ID"):
+        raise HTTPException(status_code=400, detail="NEAR_ACCOUNT_ID is required")
+    if not request.env_variables.get("NEAR_SEED_PHRASE"):
+        raise HTTPException(status_code=400, detail="NEAR_SEED_PHRASE is required")
+    if not request.env_variables.get("PHALA_API_KEY"):
+        raise HTTPException(status_code=400, detail="PHALA_API_KEY is required")
+
+            
+    state = await forge_service.handle_env_variables(session_id, request.env_variables)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return ForgeSessionStatusResponseSchema(
+        session_id=session_id,
+        waiting_for_input=state.get("waiting_for_input", False),
+        waiting_stage=state.get("waiting_stage", ""),
+        current_step=state.get("current_step", ""),
+        template_code=state.get("template_code"),
+        code_errors=state.get("code_errors"),
+        user_clarifications=state.get("user_clarifications"),
+        tool_changes=state.get("tool_changes"),
+        selected_tools=state.get("selected_tools"),
+        agent_id=state.get("agent_id")
+    )
+
 @app.post("/forge/session/{session_id}/code-update")
 async def update_code(session_id: str, request: CodeUpdateRequestSchema):
     """Submit code edits"""
@@ -388,41 +421,8 @@ async def update_code(session_id: str, request: CodeUpdateRequestSchema):
 async def finalize_agent(session_id: str):
     """Finalize agent creation"""
     if forge_service is None:
-        raise HTTPException(status_code=503, detail="Services not initialized.")
+         raise HTTPException(status_code=503, detail="Services not initialized.")
     state = await forge_service.handle_finalize_agent(session_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return ForgeSessionStatusResponseSchema(
-        session_id=session_id,
-        waiting_for_input=state.get("waiting_for_input", False),
-        waiting_stage=state.get("waiting_stage", ""),
-        current_step=state.get("current_step", ""),
-        template_code=state.get("template_code"),
-        code_errors=state.get("code_errors"),
-        user_clarifications=state.get("user_clarifications"),
-        tool_changes=state.get("tool_changes"),
-        selected_tools=state.get("selected_tools"),
-        agent_id=state.get("agent_id")
-    )
-    
-@app.post("/forge/session/{session_id}/env-variables")
-async def submit_env_variables(session_id: str, request: EnvVariablesRequestSchema):
-    """Submit environment variables"""
-    if forge_service is None:
-        raise HTTPException(status_code=503, detail="Services not initialized.")
-    
-    # check if user has passed all the required env variables
-    if not request.env_variables:
-        raise HTTPException(status_code=400, detail="Env variables are required")
-    if not request.env_variables.get("NEAR_ACCOUNT_ID"):
-        raise HTTPException(status_code=400, detail="NEAR_ACCOUNT_ID is required")
-    if not request.env_variables.get("NEAR_SEED_PHRASE"):
-        raise HTTPException(status_code=400, detail="NEAR_SEED_PHRASE is required")
-    if not request.env_variables.get("PHALA_API_KEY"):
-        raise HTTPException(status_code=400, detail="PHALA_API_KEY is required")
-
-            
-    state = await forge_service.handle_env_variables(session_id, request.env_variables)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
     return ForgeSessionStatusResponseSchema(
