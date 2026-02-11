@@ -241,6 +241,8 @@ export function useForgeSession(userId: string = 'default_user') {
   // Update code
   const updateCode = useCallback(async (filePath: string, content: string) => {
     if (!sessionId) throw new Error('No active session');
+
+    console.log('###updateCode', filePath, content);
     
     setIsLoading(true);
     try {

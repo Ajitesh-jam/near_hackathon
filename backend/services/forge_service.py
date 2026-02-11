@@ -490,7 +490,7 @@ class ForgeService:
         if not agent_path.exists():
             logger.error(f"Agent dir not found: {agent_dir}")
             return None
-        return self.execute_command(session_id, "bash deply.sh --compile-only")
+        return self.execute_command(session_id, "bash deploy.sh --compile-only")
     
     async def build_docker_image(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Compile contract, then build and push Docker image; logs stream to server terminal."""
@@ -505,7 +505,7 @@ class ForgeService:
             logger.error(f"Agent dir not found: {agent_dir}")
             return None
 
-        return self.execute_command(session_id, "bash deply.sh --image")
+        return self.execute_command(session_id, "bash deploy.sh --image")
     
     def get_session_agent_files(self, session_id: str) -> Optional[Dict[str, str]]:
         """Returns all files from the session's agent directory (contract/, .env, docker-compose, etc.)"""
