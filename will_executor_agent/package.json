@@ -16,10 +16,13 @@
   "dependencies": {
     "@hono/node-server": "^1.15.0",
     "@neardefi/shade-agent-js": "^1.0.1",
+    "axios": "^1.13.5",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
+    "googleapis": "^133.0.0",
     "hono": "^4.8.4",
-    "openai": "^5.16.0"
+    "openai": "^5.16.0",
+    "twitter-api-v2": "^1.29.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
