@@ -34,7 +34,7 @@ export const will_entry: WillEntry = {
     executor: "ajitesh-1.testnet",
     beneficiaries: [
         { accountId: "ajitesh-2.testnet", split: 50 },
-        { accountId: "ajitesh-jam.near", split: 50 },
+        { accountId: "ajitesh-1.testnet", split: 50 },
     ],
     socialMediaAccounts: [
         // {
@@ -45,7 +45,7 @@ export const will_entry: WillEntry = {
         // },
         {
             platform: "youtube",
-            username: "ajitesh.jam@gmail.com",
+            username: "UCp--YUtWvIB5_RDw1oPDwgA", 
             timePeriodDays: 3,
             lastLoginISO: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
         },

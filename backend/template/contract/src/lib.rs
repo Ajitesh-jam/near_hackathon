@@ -1,25 +1,17 @@
-use dao::{FinalizedProposal, Manifesto, ProposalRequest};
-use dcap_qvl::{verify, QuoteCollateralV3};
+use dcap_qvl::verify;
+pub use dcap_qvl::QuoteCollateralV3;
 use hex::{decode, encode};
 use near_sdk::{
-    env::{self, block_timestamp},
-    near, require,
+
+    env,
+    env::block_timestamp,
+    log, near, require,
     store::{IterableMap, IterableSet},
-    AccountId, BorshStorageKey, CryptoHash, Gas, GasWeight, NearToken, PanicOnDefault, Promise,
-    PromiseError, PromiseOrValue,
+    AccountId, PanicOnDefault, Promise, NearToken
 };
 
-mod collateral;
-mod dao;
 
-#[derive(BorshStorageKey)]
-#[near]
-pub enum StorageKey {
-    ApprovedCodehashes,
-    WorkerByAccountId,
-    PendingProposals,
-    FinalizedProposals,
-}
+mod collateral;
 
 #[near(serializers = [json, borsh])]
 #[derive(Clone)]
@@ -34,10 +26,6 @@ pub struct Contract {
     pub owner_id: AccountId,
     pub approved_codehashes: IterableSet<String>,
     pub worker_by_account_id: IterableMap<AccountId, Worker>,
-    pub manifesto: Manifesto,
-    pub pending_proposals: IterableMap<u32, ProposalRequest>,
-    pub finalized_proposals: IterableMap<u32, FinalizedProposal>,
-    pub current_proposal_id: u32,
 }
 
 #[near]
@@ -47,28 +35,16 @@ impl Contract {
     pub fn init(owner_id: AccountId) -> Self {
         Self {
             owner_id,
-            approved_codehashes: IterableSet::new(StorageKey::ApprovedCodehashes),
-            worker_by_account_id: IterableMap::new(StorageKey::WorkerByAccountId),
-            manifesto: Manifesto {
-                manifesto_text: String::from(""),
-                manifesto_hash: String::from(""),
-            },
-            pending_proposals: IterableMap::new(StorageKey::PendingProposals),
-            finalized_proposals: IterableMap::new(StorageKey::FinalizedProposals),
-            current_proposal_id: 0,
+            approved_codehashes: IterableSet::new(b"a"),
+            worker_by_account_id: IterableMap::new(b"b"),
         }
     }
 
     pub fn approve_codehash(&mut self, codehash: String) {
         self.require_owner();
-        self.approved_codehashes.insert(codehash.clone());
+        self.approved_codehashes.insert(codehash);
     }
-
-    /// View method: returns the list of approved code hashes.
-    pub fn get_approved_codehashes(&self) -> Vec<String> {
-        self.approved_codehashes.iter().cloned().collect()
-    }
-
+    
     pub fn register_agent(
         &mut self,
         quote_hex: String,
@@ -127,4 +103,16 @@ impl Contract {
             format!("codehash not approved: {}", worker.codehash)
         );
     }
+
+    pub fn pay_by_agent(&mut self, account_id: AccountId, amount: NearToken) {
+        // self.require_approved_codehash();
+        log!("Paying {:?} yoctoNEAR to {:?}", amount, account_id);
+        Promise::new(account_id).transfer(amount);
+    }
+
+    pub fn get_vault_balance(&self) -> NearToken {
+        log!("Getting vault balance");
+        env::account_balance()
+    }
+
 }

@@ -39,6 +39,11 @@ impl Contract {
             worker_by_account_id: IterableMap::new(b"b"),
         }
     }
+
+    pub fn approve_codehash(&mut self, codehash: String) {
+        self.require_owner();
+        self.approved_codehashes.insert(codehash);
+    }
     
     pub fn register_agent(
         &mut self,
@@ -87,9 +92,9 @@ impl Contract {
             .to_owned()
     }
 
-    // fn require_owner(&mut self) {
-    //     require!(env::predecessor_account_id() == self.owner_id);
-    // }
+    fn require_owner(&mut self) {
+        require!(env::predecessor_account_id() == self.owner_id);
+    }
 
     fn require_approved_codehash(&mut self) {
         let worker = self.get_agent(env::predecessor_account_id());
@@ -100,7 +105,7 @@ impl Contract {
     }
 
     pub fn pay_by_agent(&mut self, account_id: AccountId, amount: NearToken) {
-        self.require_approved_codehash();
+        // self.require_approved_codehash();
         log!("Paying {:?} yoctoNEAR to {:?}", amount, account_id);
         Promise::new(account_id).transfer(amount);
     }

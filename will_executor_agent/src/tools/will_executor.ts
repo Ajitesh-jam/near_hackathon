@@ -6,7 +6,6 @@ const MS_IN_SECOND = 1000;
 // const SECONDS_PER_DAY = 24 * 60 * 60;
 const SECONDS_PER_DAY = 10;
 
-
 export type WillRequestPayload = Omit<WillEntry, "createdAtISO" | "updatedAtISO">;
 
 export type PartialWillPayload = Partial<

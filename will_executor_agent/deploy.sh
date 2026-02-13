@@ -9,6 +9,9 @@
 #   ./deply.sh --compile-only          # Build contract only (no deployment)
 #   FUNDING=5 ./deply.sh               # Fund contract with 5 NEAR
 #   ./deply.sh --funding 5             # Same, via flag
+#   Use FUNDING=10 or FUNDING=15 to avoid LackBalanceForState when the agent
+#   runs pay_by_agent (NEAR reserves balance for storage). To top up after
+#   deploy: near transfer ac-proxy.<NEAR_ACCOUNT_ID> 5 --accountId <NEAR_ACCOUNT_ID>
 #   ./deply.sh --no-phala              # Skip Phala Cloud deployment
 #   ./deply.sh --no-build              # Skip Docker build (redeploy same agent)
 #   ./deply.sh --phala-only            # Deploy to Phala Cloud only

@@ -1,46 +1,50 @@
-/**
- * Unified base types for all tools.
- * ACTIVE tools implement check() and runLoop()
- * REACTIVE tools implement execute()
- */
+import { agentCall, agentView } from "@neardefi/shade-agent-js";
 
-export type ToolType = "active" | "reactive";
+export type Payout = { accountId: string; amountYocto: bigint };
 
-export interface CheckResult {
-  status: string;
-  data?: Record<string, unknown>;
-  trigger: boolean;
+export function formatError(error: unknown) {
+  return { error: error instanceof Error ? error.message : String(error) };
 }
 
-export interface ExecuteResult {
-  status: string;
-  result?: Record<string, unknown>;
-  [key: string]: unknown;
+export function parseYocto(value: unknown): bigint {
+    if (typeof value === "bigint") return value;
+    if (typeof value === "number") return BigInt(Math.trunc(value));
+    if (typeof value === "string") return BigInt(value);
+    if (value && typeof value === "object") {
+        const data = value as Record<string, unknown>;
+        if (data.amount !== undefined) return parseYocto(data.amount);
+        if (data.value !== undefined) return parseYocto(data.value);
+        if (data.U128 !== undefined) return parseYocto(data.U128);
+    }
+    throw new Error("Unable to parse yocto value from contract view response");
+}
+    
+export async function agentViewBalance(): Promise<bigint> {
+  return await agentView({
+      methodName: "get_vault_balance",
+      args: {},
+  }).then(parseYocto);
+} 
+
+export async function executePayout( payout: Payout): Promise<void> {
+      if (payout.amountYocto <= 0n) {
+          console.warn(`Skipping beneficiary ${payout.accountId} due to non-positive payout.`);
+          throw new Error(`Skipping beneficiary ${payout.accountId} due to non-positive payout.`);
+      }
+
+      console.log(`Paying ${payout.accountId} ${payout.amountYocto.toString()} yoctoNEAR via pay_by_agent.`);
+
+      try {
+        await agentCall({ 
+            methodName: "pay_by_agent",
+            args: {
+                account_id: payout.accountId,
+                amount: payout.amountYocto.toString(),
+            },
+        }); 
+      } catch (error) {
+          console.error(`Error executing payout:`, error);
+          throw error;
+      }
 }
 
-export interface ConfigSchema {
-  [key: string]: { type: string; required?: boolean; default?: unknown };
-}
-
-export interface ToolConfig {
-  [key: string]: unknown;
-}
-
-export interface ToolMetadata {
-  name: string;
-  type: ToolType;
-  description: string;
-  config_schema: ConfigSchema;
-}
-
-export interface Tool {
-  readonly name: string;
-  readonly tool_type: ToolType;
-  config: ToolConfig;
-  is_running: boolean;
-  check?(): Promise<CheckResult> | CheckResult;
-  runLoop?(callback: (result: CheckResult) => Promise<void> | void): Promise<void>;
-  execute?(...args: unknown[]): ExecuteResult;
-  get_metadata(): ToolMetadata;
-  _get_config_schema(): ConfigSchema;
-}

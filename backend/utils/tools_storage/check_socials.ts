@@ -142,6 +142,7 @@ export async function getLatestYouTubeActivity(account?: SocialMediaAccount): Pr
         return null;
     }
 }
+
 /** Gmail does not support API-key access for user mailboxes; OAuth only. */
 async function getLatestGmailActivity(): Promise<Date | null> {
     const creds = getGmailOAuthCredentials();
@@ -212,4 +213,3 @@ async function getLatestInstagramActivity(): Promise<Date | null> {
     if (!res.data.data?.length) return null;
     return res.data.data[0].timestamp ? new Date(res.data.data[0].timestamp) : null;
 }
-

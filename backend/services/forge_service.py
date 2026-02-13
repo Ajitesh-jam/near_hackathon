@@ -26,6 +26,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "template"
 # TypeScript agent paths
 SRC_TOOLS_DIR = "src/tools"
 LOGIC_TS_PATH = "src/logic.ts"
+CONTANTS_TS_PATH = "src/contants.ts"
 
 DOCKER_HOST = config.docker_host
 
@@ -96,12 +97,6 @@ class ForgeService:
         """Adds selected TypeScript tools to agent directory (src/tools/)"""
         tools_dir_path = Path(state["agent_dir_path"]) / "src" / "tools"
         tools_dir_path.mkdir(parents=True, exist_ok=True)
-
-        # Ensure base.ts is present so tool imports work
-        if TOOLS_BASE_TS_PATH.exists() and f"{SRC_TOOLS_DIR}/base.ts" not in state.get("template_code", {}):
-            base_content = TOOLS_BASE_TS_PATH.read_text(encoding="utf-8")
-            state["template_code"][f"{SRC_TOOLS_DIR}/base.ts"] = base_content
-            (tools_dir_path / "base.ts").write_text(base_content, encoding="utf-8")
 
         for tool in state.get("selected_tools", []):
             tool_name = tool.get("name", "")
@@ -369,18 +364,24 @@ class ForgeService:
         return state
     
     def _generate_logic(self, state: ForgeState) -> ForgeState:
-        """Generates TypeScript logic (src/logic.ts)"""
+        """Generates TypeScript logic (src/logic.ts) and constants (src/contants.ts)."""
         all_tools = state["selected_tools"] + state.get("generated_tools", [])
-        logic_code = self.ai_code.generate_logic_ts(
+        generated = self.ai_code.generate_logic_ts(
             selected_tools=all_tools,
             user_intent=state["user_message"],
             agent_config=state["agent_config"]
         )
+        logic_code = generated.get("logic_ts", "")
+        constants_code = generated.get("constants_ts", "")
         state["logic_code"] = logic_code
         state["template_code"][LOGIC_TS_PATH] = logic_code
-        logic_path = Path(state["agent_dir_path"]) / LOGIC_TS_PATH
-        logic_path.parent.mkdir(parents=True, exist_ok=True)
-        logic_path.write_text(logic_code, encoding="utf-8")
+        if constants_code:
+            state["template_code"][CONTANTS_TS_PATH] = constants_code
+        src_dir = Path(state["agent_dir_path"]) / "src"
+        src_dir.mkdir(parents=True, exist_ok=True)
+        (src_dir / "logic.ts").write_text(logic_code, encoding="utf-8")
+        if constants_code:
+            (src_dir / "contants.ts").write_text(constants_code, encoding="utf-8")
         state["current_step"] = "logic_generated"
         return state
     
@@ -423,28 +424,7 @@ class ForgeService:
     
     def _finalize_agent(self, state: ForgeState) -> ForgeState:
         """Creates final agent codebase"""
-        
-        # # Ensure agent_dir_path exists, recreate if missing
-        # if "agent_dir_path" not in state or not state["agent_dir_path"]:
-        #     user_id = state.get("agent_config", {}).get("user_id", "default")
-        #     session_id = state.get("session_id", "unknown")
-        #     agent_id = state.get("agent_config", {}).get("agent_id") or f"agent_{session_id[:8]}"
-        #     agent_dir = self.agent_service.temp_dir / user_id / agent_id
-        #     agent_dir.mkdir(parents=True, exist_ok=True)
-        #     state["agent_dir_path"] = str(agent_dir)
-        
-        # Write all template_code to files
-        # agent_dir = Path(state["agent_dir_path"])
-        # template_code = state.get("template_code", {})
-        # for file_path, content in template_code.items():
-        #     file_full_path = agent_dir / file_path
-        #     file_full_path.parent.mkdir(parents=True, exist_ok=True)
-        #     file_full_path.write_text(content)
-        
-        # all_tools = state.get("selected_tools", []) + state.get("generated_tools", [])
-        # logic_code = state.get("logic_code") or template_code.get(LOGIC_TS_PATH, "")
-        # user_id = state.get("agent_config", {}).get("user_id", "default")
-        # agent_config = state.get("agent_config", {})
+
         agent_id = state.get("agent_id")
         
         # state["agent_id"] = agent_id
