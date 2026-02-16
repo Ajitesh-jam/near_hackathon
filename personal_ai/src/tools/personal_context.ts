@@ -20,6 +20,8 @@ type RawData = {
     midTerm?: unknown[];
     longTerm?: unknown[];
   };
+  interests?: string[];
+  hobbies?: string[];
   devices?: Array<Record<string, unknown> & { id?: string; deviceName?: string; type?: string; serial?: string; imei?: string }>;
   smart_home_devices?: unknown[];
   transaction_history?: unknown[];
@@ -37,6 +39,44 @@ export async function analyze_personal_context(args: {
   const query = (args.query ?? args.input ?? "").trim();
   const raw = await readRawDataFile();
   const data = raw as RawData;
+
+  // ----- Intro / about me / interests / hobbies (verbose for writing intros) -----
+  if (
+    hasWord(query, [
+      "intro", "introduction", "introduce", "about me", "describe me", "who i am",
+      "interest", "interests", "hobby", "hobbies", "tell him about", "tell her about",
+      "new friend", "friend i met", "friend i just met", "create my intro", "write my intro",
+    ])
+  ) {
+    const profile = data.profile ?? {};
+    const name = String(profile.fullName ?? profile.username ?? profile.nickname ?? "the user").trim();
+    const nickname = profile.nickname ? String(profile.nickname) : "";
+    const title = profile.title ? String(profile.title) : "";
+    const company = profile.company ? String(profile.company) : "";
+    const interests = Array.isArray(data.interests) ? data.interests : [];
+    const hobbies = Array.isArray(data.hobbies) ? data.hobbies : [];
+    const interestsText = interests.length > 0 ? interests.join(", ") : "none listed";
+    const hobbiesText = hobbies.length > 0 ? hobbies.join(", ") : "none listed";
+    const summary =
+      `Intro context: ${name}${nickname ? ` (${nickname})` : ""}. ` +
+      (title ? `Role: ${title}. ` : "") +
+      (company ? `Works at ${company}. ` : "") +
+      `Interests: ${interestsText}. Hobbies: ${hobbiesText}. ` +
+      "Use this to draft a short, friendly introduction the user can send (e.g. to a new friend online).";
+    return {
+      summary,
+      details: {
+        name,
+        nickname: nickname || undefined,
+        title: title || undefined,
+        company: company || undefined,
+        interests,
+        hobbies,
+        introBlurb: `Name: ${name}. ${title ? `Works as ${title} at ${company || "a company"}. ` : ""}Interests: ${interestsText}. Hobbies: ${hobbiesText}.`,
+      },
+      category: "intro",
+    };
+  }
 
   // ----- Devices: serial number, phone, imei, laptop, tablet, etc. -----
   if (
@@ -220,12 +260,14 @@ function genericSummary(data: RawData): AnalyzeResult {
   const goals = data.goals
     ? `goals (short/mid/long term: ${(data.goals.shortTerm?.length ?? 0) + (data.goals.midTerm?.length ?? 0) + (data.goals.longTerm?.length ?? 0)} total)`
     : "";
+  const interests = Array.isArray(data.interests) ? `interests (${data.interests.length})` : "";
+  const hobbies = Array.isArray(data.hobbies) ? `hobbies (${data.hobbies.length})` : "";
   const secrets = data.secrets ? `secrets (${Object.keys(data.secrets).length} categories)` : "";
   const txns = Array.isArray(data.transaction_history) ? `transactions (${data.transaction_history.length})` : "";
   const health = Array.isArray(data.health_daily_logs) ? `health logs (${data.health_daily_logs.length})` : "";
   const journal = Array.isArray(data.dailyJournal) ? `journal (${data.dailyJournal.length})` : "";
   const mood = Array.isArray(data.moodLogs) ? `mood logs (${data.moodLogs.length})` : "";
-  const parts = [profile, devices, goals, secrets, txns, health, journal, mood].filter(Boolean);
+  const parts = [profile, devices, goals, interests, hobbies, secrets, txns, health, journal, mood].filter(Boolean);
   return {
     summary: parts.length === 0
       ? "No structured personal data found."
@@ -234,6 +276,8 @@ function genericSummary(data: RawData): AnalyzeResult {
       hasProfile: !!data.profile,
       deviceCount: Array.isArray(data.devices) ? data.devices.length : 0,
       hasGoals: !!data.goals,
+      interestsCount: Array.isArray(data.interests) ? data.interests.length : 0,
+      hobbiesCount: Array.isArray(data.hobbies) ? data.hobbies.length : 0,
       secretKeys: data.secrets ? Object.keys(data.secrets).length : 0,
       transactionCount: Array.isArray(data.transaction_history) ? data.transaction_history.length : 0,
       healthLogCount: Array.isArray(data.health_daily_logs) ? data.health_daily_logs.length : 0,

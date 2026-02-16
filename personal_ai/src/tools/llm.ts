@@ -43,7 +43,7 @@ export async function runAgent(userMessage: string): Promise<string> {
   const systemPrompt = await readSystemPrompt();
   const userData = await readDataFile();
   const dataContext =
-    "User Private Data (use tools to retrieve details): profile (name, addresses, emails, phones, IDs), devices (including phone serial numbers and IMEI), goals (short/mid/long term), secrets, transactions, health/mood/journal. Always call analyze_personal_context when the user asks to remember, recall, or look up any personal info (e.g. serial number, phone, goals, spending). Raw summary: " +
+    "User Private Data (use tools to retrieve details): profile (name, addresses, emails, phones, IDs), devices (including phone serial numbers and IMEI), goals (short/mid/long term), interests, hobbies, secrets, transactions, health/mood/journal. Always call analyze_personal_context when the user asks to remember, recall, look up personal info, or when they ask for an intro/introduction, to describe themselves, or to tell someone about their interests or hobbies. Raw summary: " +
     JSON.stringify(userData);
   const initialUserContent = createUserContent(
     `${systemPrompt}\n\n${dataContext}\n\nUser: ${userMessage}`
@@ -97,7 +97,7 @@ export async function runAgent(userMessage: string): Promise<string> {
   const finalResponse = await client.models.generateContent({
     model: LLM_MODEL,
     contents: [initialUserContent, modelContent, followUpUserContent],
-    config: { maxOutputTokens: 1024 },
+    config: { maxOutputTokens: 8192 },
   });
 
   return finalResponse.text ?? "";

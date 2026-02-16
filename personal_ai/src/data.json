@@ -275,6 +275,23 @@
       }
     ]
   },
+  "interests": [
+    "AI and machine learning",
+    "running and fitness",
+    "reading",
+    "building side projects",
+    "coffee",
+    "personal productivity",
+    "home lab and tinkering"
+  ],
+  "hobbies": [
+    "Running and half-marathon training",
+    "Reading (sci-fi and tech books)",
+    "Tinkering with Raspberry Pi and home automation",
+    "Coffee brewing",
+    "Listening to podcasts and music",
+    "Occasional cooking and trying new recipes"
+  ],
   "devices": [
     {
       "id": "DEV_01",
