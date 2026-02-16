@@ -37,6 +37,7 @@ const ENV_FIELDS = [
   { key: 'NEAR_SEED_PHRASE', label: 'NEAR Seed Phrase', required: true, type: 'password' as const },
   { key: 'PHALA_API_KEY', label: 'Phala API Key (optional)', required: true, type: 'password' as const },
   { key: 'NEAR_AI_API_KEY', label: 'NEAR AI API Key (optional)', required: false, type: 'password' as const },
+  { key: 'GOOGLE_API_KEY', label: 'Google API Key (optional)', required: false, type: 'password' as const },
 ] as const;
 
 // Simplified steps matching the exact workflow

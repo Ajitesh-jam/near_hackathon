@@ -28,9 +28,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local env files
+# local env files (template's .env.development.local is the committed default)
 .env
 .env*.local
+!.env.development.local
 
 # vercel
 .vercel

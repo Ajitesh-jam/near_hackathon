@@ -304,7 +304,8 @@ async def submit_prompt(session_id: str, request: PromptSubmissionRequestSchema)
     """Submit user prompt"""
     if forge_service is None:
         raise HTTPException(status_code=503, detail="Services not initialized.")
-    state = await forge_service.handle_submit_prompt(session_id, request.prompt, request.want_clarification)
+    # state = await forge_service.handle_submit_prompt(session_id, request.prompt, request.want_clarification)
+    state = await forge_service.handle_submit_prompt(session_id, request.prompt, True)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
     return ForgeSessionStatusResponseSchema(

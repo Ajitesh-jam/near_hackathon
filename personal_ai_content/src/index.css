@@ -1,0 +1,14 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+}
+
+body {
+  font-family: var(--font-sans);
+  antialiased: true;
+  background-color: #0c0a09;
+  color: #fafaf9;
+  min-height: 100vh;
+}

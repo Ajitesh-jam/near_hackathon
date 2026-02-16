@@ -138,8 +138,8 @@ class AICodeService:
         selected_tools: List[Dict],
         user_intent: str,
         agent_config: Dict,
-    ) -> str:
-        """Generates TypeScript logic.ts code that connects tools based on user intent."""
+    ) -> Dict[str, str]:
+        """Generates TypeScript logic.ts and contants.ts that connect tools and provide constants."""
         active_tools = []
         reactive_tools = []
         for tool in selected_tools:
@@ -157,7 +157,23 @@ class AICodeService:
             reactive_tools=[t.get("name", "") for t in reactive_tools],
         )
         response = self.llm.invoke(prompt)
-        return self._clean_code_blocks(str(response.content))
+        raw = self._clean_code_blocks(str(response.content))
+        return self._parse_logic_and_constants_ts(raw)
+
+    def _parse_logic_and_constants_ts(self, raw: str) -> Dict[str, str]:
+        """Splits LLM output into logic_ts and constants_ts using === FILE: ... === markers."""
+        logic_marker = "=== FILE: src/logic.ts ==="
+        constants_marker = "=== FILE: src/contants.ts ==="
+        out = {"logic_ts": "", "constants_ts": ""}
+        if constants_marker in raw:
+            parts = raw.split(constants_marker, 1)
+            out["logic_ts"] = parts[0].replace(logic_marker, "").strip()
+            out["constants_ts"] = parts[1].strip()
+        elif logic_marker in raw:
+            out["logic_ts"] = raw.replace(logic_marker, "").strip()
+        else:
+            out["logic_ts"] = raw
+        return out
 
     def _parse_tool_code_ts(self, code: str) -> List[Dict[str, Any]]:
         """Parses generated TypeScript and extracts tool name and code (regex/heuristics)."""
