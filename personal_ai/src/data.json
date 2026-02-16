@@ -1787,20 +1787,38 @@
       },
       "id": "evt_1771249988702",
       "created_at": "2026-02-16T13:53:08.702Z"
+    },
+    {
+      "time_of_occur": "2026-02-17T18:29:09.802Z",
+      "description": "Fun event",
+      "which_tool_to_call": "pay",
+      "arguments": {},
+      "id": "evt_1771266551328",
+      "created_at": "2026-02-16T18:29:11.328Z"
     }
   ],
   "notifications": [
     {
-      "id": "notif_1771250211653",
-      "time_of_occur": "2026-02-16T13:56:51.653Z",
-      "description": "Scheduled: Pay 3 NEAR to father automatically: Success",
-      "created_at": "2026-02-16T13:56:51.653Z",
+      "id": "notif_1771265908954",
+      "time_of_occur": "2026-02-16T18:18:28.954Z",
+      "description": "Payment to mother (1 NEAR): Success",
+      "created_at": "2026-02-16T18:18:28.954Z",
+      "informational": true,
+      "tool": "pay",
+      "success": true
+    },
+    {
+      "id": "notif_1771266551330",
+      "time_of_occur": "2026-02-16T18:29:11.330Z",
+      "description": "Scheduled: Fun event: Success",
+      "created_at": "2026-02-16T18:29:11.330Z",
       "informational": true,
       "tool": "schedule_event",
       "success": true
     }
   ],
   "near_addresses": {
-    "father": "ajitesh-jam.testnet"
+    "father": "ajitesh-jam.testnet",
+    "mother": "0x754e70c870a7910c03263ecB77239fd2F8b8380F"
   }
 }

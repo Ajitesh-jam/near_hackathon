@@ -14,7 +14,10 @@ function getEffectiveBaseUrl(): string {
   if (!base) throw new Error("Backend URL not configured");
   const normalized = base.replace(/\/+$/, "");
   // Route through Vite proxy to avoid CORS in dev
-  if (typeof window !== "undefined" && /^https?:\/\/localhost:3000(\/|$)/i.test(normalized)) {
+  if (
+    typeof window !== "undefined" &&
+    /^https?:\/\/localhost:3000(\/|$)/i.test(normalized)
+  ) {
     return "/agent-api";
   }
   return normalized;
@@ -80,7 +83,9 @@ export const api = {
       body: JSON.stringify({ message }),
     });
     if (!res.ok) throw new Error(`Chat error ${res.status}`);
-    return res.json();
+    // Backend now returns plain text
+    const text = await res.text();
+    return { content: text };
   },
 
   addData: (endpoint: string, data: Record<string, unknown>) =>
