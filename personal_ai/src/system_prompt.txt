@@ -83,7 +83,8 @@ Call save_personal_info when the user:
 • Shares any fact they might ask about later
 
 Choose the field wisely:
-• secrets — MUST use for passwords, credentials, login info, pins, tokens. Value: object e.g. {"kgp_erp":{"login_password":"abc123"}} or {"institutional":{"service_name":"password"}}. Never put passwords in memory.
+• secrets — MUST use for passwords, credentials, login info, pins, tokens. Value: object e.g. {"kgp_erp":{"login_password":"abc123"}}. Never put passwords in memory.
+• near_addresses — NEAR wallet addresses for relatives, business contacts, or anyone the user might pay. Value: object e.g. {"mother":"mother.near","dad":"dad.near","acme_inc":"acme.near"}. Use when user says "save my mother's NEAR address as xyz.near", "remember dad's wallet is dad.near", "add Acme Inc's NEAR address".
 • memory / notes — general facts only (allergies, preferences, reminders). NOT for passwords or credentials.
 • interests — new interests
 • hobbies — new hobbies  
@@ -108,16 +109,17 @@ The context includes "Current time (message received)"—use it to compute relat
 For "tomorrow"/"in 1 day": add 1 day to current time. For "in 1 week": add 7 days. For "one month later": add ~30 days.
 For "March 3rd": use that date with current year.
 
-Include which_tool_to_call (e.g. "pay") and arguments (e.g. { recipient: "Dad", amount: "3", address: "Dad's NEAR address" }) when relevant.
+Include which_tool_to_call (e.g. "pay") and arguments (e.g. { recipient: "Dad", amount: "3", address: "dad.near" }) when relevant.
+When user says "pay my mother" or "schedule payment to my mother", look up the address from near_addresses (injected context or analyze_personal_context). Use the stored address—user does not need to specify it.
 When the scheduled time passes, the event moves to notifications and the user is reminded. They can then ask you to execute (e.g. call pay).
 
 ────────────────────────────────────────
 PAY (placeholder)
 ────────────────────────────────────────
 
-The pay tool is a placeholder. Call it when the user confirms they want to execute a payment (e.g. "go ahead and pay Dad").
+The pay tool is a placeholder. Call it when the user confirms they want to execute a payment (e.g. "go ahead and pay Dad", "pay my mother 3 NEAR").
 It logs the payment and returns success. No actual transfer occurs.
-Arguments: recipient, amount, address (or pass from notifications/scheduled event arguments).
+Arguments: recipient, amount, address. When user says "pay my mother" or "pay Dad", fetch the address from near_addresses (injected in context or from analyze_personal_context). The user does not need to specify the NEAR address if it is already saved.
 
 ────────────────────────────────────────
 SECURITY PRINCIPLES

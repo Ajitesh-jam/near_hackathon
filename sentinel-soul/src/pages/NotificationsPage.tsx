@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bell, Check, X, Clock, Zap, RefreshCw, Sparkles } from "lucide-react";
+import { Bell, Check, Clock, Zap, RefreshCw, Sparkles } from "lucide-react";
 import { api, type Notification } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -23,12 +23,12 @@ const NotificationsPage: React.FC = () => {
 
   useEffect(() => { fetchNotifications(); }, []);
 
-  const handleRespond = async (id: string, action: "approve" | "reject") => {
+  const handleRespond = async (id: string, action: "approve" | "reject" | "dismiss") => {
     setResponding(id);
     try {
       await api.respondNotification(id, action);
       setNotifications((prev) => prev.filter((n) => n.id !== id));
-      toast.success(action === "approve" ? "Approved & executed" : "Rejected & removed");
+      toast.success("Dismissed");
     } catch {
       toast.error(`Failed to ${action}`);
     } finally {
@@ -47,7 +47,7 @@ const NotificationsPage: React.FC = () => {
             Notifications
           </h1>
           <p className="text-sm text-muted-foreground mt-1 ml-12">
-            {notifications.length} pending action{notifications.length !== 1 ? "s" : ""}
+            {notifications.length} notification{notifications.length !== 1 ? "s" : ""}
           </p>
         </div>
         <button
@@ -94,7 +94,7 @@ const NotificationsPage: React.FC = () => {
                   <div className="flex items-center gap-2 mb-2">
                     <Zap className="w-4 h-4 text-accent flex-shrink-0" />
                     <span className="font-mono text-xs text-accent uppercase tracking-wider">
-                      {n.which_tool_to_call}
+                      {(n as Record<string, unknown>).tool ?? n.which_tool_to_call ?? "Info"}
                     </span>
                   </div>
                   <p className="text-foreground font-medium mb-2">{n.description}</p>
@@ -110,24 +110,14 @@ const NotificationsPage: React.FC = () => {
                     )}
                   </div>
                 </div>
-                <div className="flex gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => handleRespond(n.id, "approve")}
-                    disabled={responding === n.id}
-                    className="gradient-btn px-3.5 py-2 flex items-center gap-1.5 text-xs"
-                    title="Approve"
-                  >
-                    <Check className="w-4 h-4" /> Approve
-                  </button>
-                  <button
-                    onClick={() => handleRespond(n.id, "reject")}
-                    disabled={responding === n.id}
-                    className="gradient-btn-outline px-3.5 py-2 flex items-center gap-1.5 text-xs !border-destructive/40 !text-destructive"
-                    title="Reject"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
+                <button
+                  onClick={() => handleRespond(n.id, "dismiss")}
+                  disabled={responding === n.id}
+                  className="gradient-btn-outline px-3.5 py-2 flex items-center gap-1.5 text-xs flex-shrink-0"
+                  title="Dismiss"
+                >
+                  <Check className="w-4 h-4" /> Dismiss
+                </button>
               </div>
             </motion.div>
           ))}

@@ -13,7 +13,8 @@ const ScheduledEventsPage: React.FC = () => {
     setLoading(true);
     try {
       const data = await api.getScheduledEvents();
-      setEvents((data.notifications || []).sort((a, b) => new Date(a.time_of_occur).getTime() - new Date(b.time_of_occur).getTime()));
+      console.log("shedle", data);
+      setEvents((data.scheduled_events || []).sort((a, b) => new Date(a.time_of_occur).getTime() - new Date(b.time_of_occur).getTime()));
     } catch {
       toast.error("Failed to fetch events");
     } finally {

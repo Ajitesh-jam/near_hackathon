@@ -1751,19 +1751,56 @@
     }
   ],
   "memory": [],
-  "scheduled_events": [],
-  "notifications": [
+  "scheduled_events": [
     {
-      "time_of_occur": "2026-02-16T11:14:28.127Z",
-      "description": "Pay 5 NEAR to my uncle",
+      "time_of_occur": "2026-03-05T00:00:00.000Z",
+      "description": "Payment to mother",
       "which_tool_to_call": "pay",
       "arguments": {
-        "amount": "5",
-        "recipient": "My uncle",
-        "address": "ndkandk"
+        "amount": "3",
+        "address": "abcdefh",
+        "recipient": "mother"
       },
-      "id": "evt_1771240470071",
-      "created_at": "2026-02-16T11:14:30.071Z"
+      "id": "evt_1771245541237",
+      "created_at": "2026-02-16T12:39:01.237Z"
+    },
+    {
+      "time_of_occur": "2026-03-05T00:00:00.000Z",
+      "description": "Pay 5 NEAR to my mother",
+      "which_tool_to_call": "pay",
+      "arguments": {
+        "recipient": "My mother",
+        "amount": "5",
+        "address": "abcdefg"
+      },
+      "id": "evt_1771245863136",
+      "created_at": "2026-02-16T12:44:23.136Z"
+    },
+    {
+      "time_of_occur": "2026-02-17T13:53:06.967Z",
+      "description": "Pay 3 NEAR to father",
+      "which_tool_to_call": "pay",
+      "arguments": {
+        "address": "ajitesh-jam.testnet",
+        "amount": "3",
+        "recipient": "father"
+      },
+      "id": "evt_1771249988702",
+      "created_at": "2026-02-16T13:53:08.702Z"
     }
-  ]
+  ],
+  "notifications": [
+    {
+      "id": "notif_1771250211653",
+      "time_of_occur": "2026-02-16T13:56:51.653Z",
+      "description": "Scheduled: Pay 3 NEAR to father automatically: Success",
+      "created_at": "2026-02-16T13:56:51.653Z",
+      "informational": true,
+      "tool": "schedule_event",
+      "success": true
+    }
+  ],
+  "near_addresses": {
+    "father": "ajitesh-jam.testnet"
+  }
 }

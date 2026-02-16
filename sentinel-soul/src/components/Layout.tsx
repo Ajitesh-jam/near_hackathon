@@ -33,12 +33,12 @@ const Layout: React.FC = () => {
       .catch(() => {});
   }, []);
 
-  const handleRespond = async (id: string, action: "approve" | "reject") => {
+  const handleRespond = async (id: string, action: "approve" | "reject" | "dismiss") => {
     setResponding(id);
     try {
       await api.respondNotification(id, action);
       setNotifications((prev) => prev.filter((n) => n.id !== id));
-      toast.success(action === "approve" ? "Approved & executed" : "Rejected");
+      toast.success("Dismissed");
     } catch {
       toast.error(`Failed to ${action}`);
     } finally {
@@ -98,7 +98,7 @@ const Layout: React.FC = () => {
             className="gradient-btn-outline w-full flex items-center justify-center gap-2 px-4 py-2.5"
           >
             <Sparkles className="w-4 h-4" />
-            <span className="text-sm">{notifications.length} Pending</span>
+            <span className="text-sm">{notifications.length} Notification{notifications.length !== 1 ? "s" : ""}</span>
           </button>
         </div>
 
@@ -219,7 +219,7 @@ const Layout: React.FC = () => {
                         <div className="flex items-center gap-2 mb-2">
                           <Zap className="w-3.5 h-3.5 text-accent" />
                           <span className="font-mono text-xs text-accent uppercase tracking-wider">
-                            {n.which_tool_to_call}
+                            {(n as Record<string, unknown>).tool ?? n.which_tool_to_call ?? "Info"}
                           </span>
                         </div>
                         <p className="text-sm text-foreground font-medium mb-2">{n.description}</p>
@@ -227,22 +227,13 @@ const Layout: React.FC = () => {
                           <Clock className="w-3 h-3" />
                           {new Date(n.time_of_occur).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                         </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleRespond(n.id, "approve")}
-                            disabled={responding === n.id}
-                            className="gradient-btn flex-1 px-3 py-2 flex items-center justify-center gap-1.5 text-xs"
-                          >
-                            <Check className="w-3.5 h-3.5" /> Approve
-                          </button>
-                          <button
-                            onClick={() => handleRespond(n.id, "reject")}
-                            disabled={responding === n.id}
-                            className="gradient-btn-outline flex-1 px-3 py-2 flex items-center justify-center gap-1.5 text-xs !border-destructive/40 !text-destructive"
-                          >
-                            <X className="w-3.5 h-3.5" /> Reject
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => handleRespond(n.id, "dismiss")}
+                          disabled={responding === n.id}
+                          className="gradient-btn-outline w-full px-3 py-2 flex items-center justify-center gap-1.5 text-xs"
+                        >
+                          <Check className="w-3.5 h-3.5" /> Dismiss
+                        </button>
                       </motion.div>
                     ))}
                   </AnimatePresence>

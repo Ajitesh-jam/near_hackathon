@@ -1,4 +1,4 @@
-import { moveDueEventsToNotifications } from "./base";
+import { moveDueEventsToNotifications } from "./helper_functions";
 
 const POLL_INTERVAL_MS = 60_000;
 

@@ -1,40 +1,85 @@
-import { readRawDataFile } from "./base";
+import { readRawDataFile } from "./helper_functions";
+import { AnalyzeResult, RawData } from "../constants";
 
-export interface AnalyzeResult {
-  summary: string;
-  details: unknown;
-  category?: string;
-}
-
-function hasWord(s: string, words: string[]): boolean {
+const hasWord = (s: string, words: string[]) => {
   const lower = s.toLowerCase();
   return words.some((w) => lower.includes(w.toLowerCase()));
+};
+
+function getArray<T>(data: RawData, key: keyof RawData): T[] {
+  const v = data[key];
+  return Array.isArray(v) ? (v as T[]) : [];
 }
 
-type RawData = {
-  profile?: Record<string, unknown>;
-  secrets?: Record<string, unknown>;
-  financialOverview?: Record<string, unknown>;
-  goals?: {
-    shortTerm?: unknown[];
-    midTerm?: unknown[];
-    longTerm?: unknown[];
+function getObj<K extends keyof RawData>(data: RawData, key: K): NonNullable<RawData[K]> | Record<string, unknown> {
+  const v = data[key];
+  return (v && typeof v === "object" && !Array.isArray(v) ? v : {}) as NonNullable<RawData[K]> | Record<string, unknown>;
+}
+
+function extractMemoryAndCustom(data: RawData): { memory: unknown[]; custom: Record<string, unknown[]>; contents: string[] } {
+  const memory = getArray<unknown>(data, "memory");
+  const custom = (data.llm_custom && typeof data.llm_custom === "object" ? data.llm_custom : {}) as Record<string, unknown[]>;
+  const memoryContents = memory.map((m) =>
+    typeof m === "object" && m && "content" in m ? (m as { content: string }).content : String(m)
+  );
+  const customContents = Object.entries(custom).flatMap(([k, arr]) =>
+    (Array.isArray(arr) ? arr : []).map((v) =>
+      typeof v === "object" && v && "content" in v ? `[${k}] ${(v as { content: string }).content}` : `[${k}] ${String(v)}`
+    )
+  );
+  return { memory, custom, contents: [...memoryContents, ...customContents] };
+}
+
+function genericSummary(data: RawData): AnalyzeResult {
+  const profile = data.profile ? "profile (name, emails, phones, addresses)" : "";
+  const devices = getArray(data, "devices").length ? `devices (${getArray(data, "devices").length}, incl. serials/IMEI)` : "";
+  const memArr = getArray(data, "memory");
+  const memory = memArr.length ? `memory (${memArr.length} saved items)` : "";
+  const custom = (data.llm_custom && typeof data.llm_custom === "object" ? data.llm_custom : {}) as Record<string, unknown[]>;
+  const customKeys = Object.keys(custom);
+  const customSummary =
+    customKeys.length > 0
+      ? `llm_custom (${customKeys.length} categories: ${customKeys.join(", ")})`
+      : "";
+  const goals = data.goals
+    ? `goals (short/mid/long term: ${(data.goals.shortTerm?.length ?? 0) + (data.goals.midTerm?.length ?? 0) + (data.goals.longTerm?.length ?? 0)} total)`
+    : "";
+  const interests = getArray(data, "interests").length ? `interests (${getArray(data, "interests").length})` : "";
+  const hobbies = getArray(data, "hobbies").length ? `hobbies (${getArray(data, "hobbies").length})` : "";
+  const secretsObj = getObj(data, "secrets") as Record<string, unknown>;
+  const secrets = Object.keys(secretsObj).length ? `secrets (${Object.keys(secretsObj).length} categories)` : "";
+  const txnsLen = getArray(data, "transaction_history").length;
+  const txnsStr = txnsLen ? `transactions (${txnsLen})` : "";
+  const health = getArray(data, "health_daily_logs").length ? `health logs (${getArray(data, "health_daily_logs").length})` : "";
+  const journal = getArray(data, "dailyJournal").length ? `journal (${getArray(data, "dailyJournal").length})` : "";
+  const mood = getArray(data, "moodLogs").length ? `mood logs (${getArray(data, "moodLogs").length})` : "";
+  const scheduled = getArray(data, "scheduled_events").length ? `scheduled_events (${getArray(data, "scheduled_events").length})` : "";
+  const notifications = getArray(data, "notifications").length ? `notifications (${getArray(data, "notifications").length})` : "";
+  const nearAddrs = getObj(data, "near_addresses") as Record<string, string>;
+  const nearAddrKeys = Object.keys(nearAddrs).filter((k) => nearAddrs[k]);
+  const nearAddresses = nearAddrKeys.length ? `near_addresses (${nearAddrKeys.join(", ")})` : "";
+  const parts = [profile, devices, memory, customSummary, goals, interests, hobbies, secrets, nearAddresses, txnsStr, health, journal, mood, scheduled, notifications].filter(Boolean);
+  return {
+    summary: parts.length === 0
+      ? "No structured personal data found."
+      : `Stored data includes: ${parts.join("; ")}. Ask about a specific topic (e.g. "my phone serial", "goals", "spending", or custom keys like "allergies") for details.`,
+    details: {
+      hasProfile: !!data.profile,
+      deviceCount: getArray(data, "devices").length,
+      hasGoals: !!data.goals,
+      interestsCount: getArray(data, "interests").length,
+      hobbiesCount: getArray(data, "hobbies").length,
+      secretKeys: Object.keys(getObj(data, "secrets")).length,
+      transactionCount: getArray(data, "transaction_history").length,
+      healthLogCount: getArray(data, "health_daily_logs").length,
+      journalCount: getArray(data, "dailyJournal").length,
+      llm_customKeys: customKeys,
+      near_addresses: nearAddrKeys,
+      scheduledCount: getArray(data, "scheduled_events").length,
+      notificationCount: getArray(data, "notifications").length,
+    },
   };
-  interests?: string[];
-  hobbies?: string[];
-  memory?: unknown[];
-  llm_custom?: Record<string, unknown[]>;
-  devices?: Array<Record<string, unknown> & { id?: string; deviceName?: string; type?: string; serial?: string; imei?: string }>;
-  smart_home_devices?: unknown[];
-  transaction_history?: unknown[];
-  health_daily_logs?: unknown[];
-  moodLogs?: unknown[];
-  dailyJournal?: unknown[];
-  app_sessions?: unknown[];
-  scheduled_events?: unknown[];
-  notifications?: unknown[];
-  [key: string]: unknown;
-};
+}
 
 export async function analyze_personal_context(args: {
   query?: string;
@@ -44,7 +89,6 @@ export async function analyze_personal_context(args: {
   const raw = await readRawDataFile();
   const data = raw as RawData;
 
-  // ----- Intro / about me / interests / hobbies (verbose for writing intros) -----
   if (
     hasWord(query, [
       "intro", "introduction", "introduce", "about me", "describe me", "who i am",
@@ -52,13 +96,13 @@ export async function analyze_personal_context(args: {
       "new friend", "friend i met", "friend i just met", "create my intro", "write my intro",
     ])
   ) {
-    const profile = data.profile ?? {};
+    const profile = getObj(data, "profile") as Record<string, unknown>;
     const name = String(profile.fullName ?? profile.username ?? profile.nickname ?? "the user").trim();
     const nickname = profile.nickname ? String(profile.nickname) : "";
     const title = profile.title ? String(profile.title) : "";
     const company = profile.company ? String(profile.company) : "";
-    const interests = Array.isArray(data.interests) ? data.interests : [];
-    const hobbies = Array.isArray(data.hobbies) ? data.hobbies : [];
+    const interests = getArray<string>(data, "interests");
+    const hobbies = getArray<string>(data, "hobbies");
     const interestsText = interests.length > 0 ? interests.join(", ") : "none listed";
     const hobbiesText = hobbies.length > 0 ? hobbies.join(", ") : "none listed";
     const summary =
@@ -82,7 +126,6 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- Devices: serial number, phone, imei, laptop, tablet, etc. -----
   if (
     hasWord(query, [
       "serial", "serial number", "imei", "phone", "smartphone", "device",
@@ -90,7 +133,7 @@ export async function analyze_personal_context(args: {
       "gadget", "electronics", "warranty", "purchase date", "battery",
     ])
   ) {
-    const devices = Array.isArray(data.devices) ? data.devices : [];
+    const devices = getArray<Record<string, unknown> & { type?: string; deviceName?: string; id?: string; serial?: string; imei?: string }>(data, "devices");
     const phone = devices.find(
       (d) =>
         (String(d.type || "").toLowerCase() === "smartphone") ||
@@ -110,7 +153,6 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- Profile: name, address, email, phone number, passport, id -----
   if (
     hasWord(query, [
       "name", "address", "email", "phone number", "contact info", "profile",
@@ -118,7 +160,7 @@ export async function analyze_personal_context(args: {
       "nationality", "blood group", "where i live", "my email", "my number",
     ])
   ) {
-    const profile = data.profile ?? {};
+    const profile = getObj(data, "profile") as Record<string, unknown>;
     const addresses = Array.isArray(profile.addresses) ? profile.addresses : [];
     const summary =
       Object.keys(profile).length === 0
@@ -131,21 +173,10 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- Secrets (passwords, keys, credentials) -----
-  // Also include memory and llm_custom: user may have saved passwords there before secrets support; LLM should check both.
   if (hasWord(query, ["secret", "password", "key", "credential", "pin", "token", "login"])) {
-    const secrets = data.secrets ?? {};
+    const secrets = getObj(data, "secrets") as Record<string, unknown>;
     const keys = Object.keys(secrets);
-    const memory = Array.isArray(data.memory) ? data.memory : [];
-    const custom = data.llm_custom && typeof data.llm_custom === "object" ? data.llm_custom : {};
-    const memoryAndCustom = [
-      ...memory.map((m: unknown) => (typeof m === "object" && m && "content" in m ? (m as { content: string }).content : String(m))),
-      ...Object.entries(custom).flatMap(([k, arr]) =>
-        (Array.isArray(arr) ? arr : []).map((v: unknown) =>
-          typeof v === "object" && v && "content" in v ? `[${k}] ${(v as { content: string }).content}` : `[${k}] ${String(v)}`
-        )
-      ),
-    ];
+    const { memory, custom, contents: memoryAndCustom } = extractMemoryAndCustom(data);
     const summary =
       keys.length === 0 && memoryAndCustom.length === 0
         ? "No secrets stored."
@@ -163,9 +194,8 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- Goals (short/mid/long term) -----
   if (hasWord(query, ["goal", "target", "objective", "deadline", "milestone"])) {
-    const goals = data.goals ?? {};
+    const goals = (getObj(data, "goals") ?? {}) as { shortTerm?: unknown[]; midTerm?: unknown[]; longTerm?: unknown[] };
     const short = Array.isArray(goals.shortTerm) ? goals.shortTerm : [];
     const mid = Array.isArray(goals.midTerm) ? goals.midTerm : [];
     const long = Array.isArray(goals.longTerm) ? goals.longTerm : [];
@@ -186,15 +216,14 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- Spending, transactions, budget, money -----
   if (
     hasWord(query, [
       "spend", "expense", "money", "cost", "budget", "transaction", "income",
       "salary", "net worth", "savings", "insurance", "tax",
     ])
   ) {
-    const txns = Array.isArray(data.transaction_history) ? data.transaction_history : [];
-    const fin = data.financialOverview ?? {};
+    const txns = getArray(data, "transaction_history");
+    const fin = getObj(data, "financialOverview") as Record<string, unknown>;
     const summary =
       txns.length === 0 && Object.keys(fin).length === 0
         ? "No financial data."
@@ -206,15 +235,14 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- Health, fitness, sleep, mood -----
   if (
     hasWord(query, [
       "health", "steps", "sleep", "mood", "heart", "hrv", "calories",
       "fitness", "water", "weight", "resting",
     ])
   ) {
-    const health = Array.isArray(data.health_daily_logs) ? data.health_daily_logs : [];
-    const moods = Array.isArray(data.moodLogs) ? data.moodLogs : [];
+    const health = getArray(data, "health_daily_logs");
+    const moods = getArray(data, "moodLogs");
     const summary =
       health.length === 0 && moods.length === 0
         ? "No health or mood logs."
@@ -226,29 +254,54 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- Scheduled events and notifications -----
+  if (
+    hasWord(query, [
+      "pay", "payment", "transfer", "send", "wallet", "near address", "near",
+      "mother", "dad", "father", "mom", "sibling", "brother", "sister",
+      "relative", "business", "pay my", "pay to", "schedule payment",
+    ])
+  ) {
+    const nearAddresses = getObj(data, "near_addresses") as Record<string, string>;
+    const addrKeys = Object.keys(nearAddresses).filter((k) => nearAddresses[k]);
+    const scheduled = getArray(data, "scheduled_events");
+    const notifications = getArray(data, "notifications");
+    const addrSummary =
+      addrKeys.length > 0
+        ? `NEAR addresses stored: ${addrKeys.map((k) => `${k} -> ${nearAddresses[k]}`).join("; ")}. Use these for pay/schedule_event when user says "pay my X" or "schedule payment to X".`
+        : "No NEAR wallet addresses stored yet. User can add via chat: 'save my mother's NEAR address as xyz.near'.";
+    const schedSummary =
+      scheduled.length === 0 && notifications.length === 0
+        ? ""
+        : ` ${scheduled.length} scheduled event(s), ${notifications.length} notification(s).`;
+    return {
+      summary: addrSummary + schedSummary,
+      details: { near_addresses: nearAddresses, scheduled_events: scheduled, notifications },
+      category: "payments",
+    };
+  }
+
   if (
     hasWord(query, [
       "scheduled", "schedule", "my schedule", "notifications", "pending", "upcoming",
       "remind me", "reminder to", "pay on", "pay in", "when to pay",
     ])
   ) {
-    const scheduled = Array.isArray(data.scheduled_events) ? data.scheduled_events : [];
-    const notifications = Array.isArray(data.notifications) ? data.notifications : [];
+    const scheduled = getArray(data, "scheduled_events");
+    const notifications = getArray(data, "notifications");
+    const nearAddresses = getObj(data, "near_addresses") as Record<string, string>;
     const summary =
       scheduled.length === 0 && notifications.length === 0
         ? "No scheduled events or notifications."
         : `${scheduled.length} scheduled event(s), ${notifications.length} pending notification(s).`;
     return {
       summary,
-      details: { scheduled_events: scheduled, notifications },
+      details: { scheduled_events: scheduled, notifications, near_addresses: nearAddresses },
       category: "schedule",
     };
   }
 
-  // ----- Journal, notes, diary -----
   if (hasWord(query, ["journal", "diary", "note", "memo", "reminder", "entry", "wrote"])) {
-    const journal = Array.isArray(data.dailyJournal) ? data.dailyJournal : [];
+    const journal = getArray(data, "dailyJournal");
     return {
       summary:
         journal.length === 0 ? "No journal entries." : `${journal.length} journal entry/entries.`,
@@ -257,9 +310,8 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- Smart home -----
   if (hasWord(query, ["smart home", "ac", "thermostat", "light", "lock", "hue", "alexa"])) {
-    const smart = Array.isArray(data.smart_home_devices) ? data.smart_home_devices : [];
+    const smart = getArray(data, "smart_home_devices");
     return {
       summary: smart.length === 0 ? "No smart home devices." : `${smart.length} smart home device(s).`,
       details: smart,
@@ -267,9 +319,8 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- App usage -----
   if (hasWord(query, ["app", "screen time", "usage", "instagram", "whatsapp", "slack"])) {
-    const sessions = Array.isArray(data.app_sessions) ? data.app_sessions : [];
+    const sessions = getArray(data, "app_sessions");
     return {
       summary: sessions.length === 0 ? "No app session data." : `${sessions.length} app session record(s).`,
       details: sessions,
@@ -277,20 +328,15 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- Memory / learned facts (LLM-saved from past conversations) + custom fields -----
   if (
     hasWord(query, [
       "memory", "remember", "remembered", "what do you know", "what have you learned",
       "saved", "stored", "recall", "recalled", "you know about me",
     ])
   ) {
-    const memory = Array.isArray(data.memory) ? data.memory : [];
-    const custom = data.llm_custom && typeof data.llm_custom === "object" ? data.llm_custom : {};
+    const { memory, custom, contents } = extractMemoryAndCustom(data);
     const customKeys = Object.keys(custom);
-    const customEntries = customKeys.flatMap((k) =>
-      (Array.isArray(custom[k]) ? custom[k] : []).map((v: unknown) => ({ _key: k, ...(typeof v === "object" && v ? (v as Record<string, unknown>) : { content: v }) }))
-    );
-    const total = memory.length + customEntries.length;
+    const total = contents.length;
     const summary =
       total === 0
         ? "No memories saved yet. Use save_personal_info when the user shares facts to remember."
@@ -302,8 +348,7 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- Custom field lookup: user asks about a specific saved topic (e.g. "my allergies", "diet preferences") -----
-  const custom = data.llm_custom && typeof data.llm_custom === "object" ? data.llm_custom : {};
+  const custom = (data.llm_custom && typeof data.llm_custom === "object" ? data.llm_custom : {}) as Record<string, unknown[]>;
   const customKeys = Object.keys(custom);
   const queryLower = query.toLowerCase();
   const matchedKey = customKeys.find((k) => {
@@ -322,9 +367,8 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- Contacts / people (if present in profile or future schema) -----
   if (hasWord(query, ["contact", "people", "friend", "reach", "call"])) {
-    const profile = data.profile ?? {};
+    const profile = getObj(data, "profile") as Record<string, unknown>;
     const phones = [profile.phonePrimary, profile.phoneSecondary].filter(Boolean);
     const emails = [profile.primaryEmail, profile.secondaryEmail].filter(Boolean);
     return {
@@ -337,50 +381,5 @@ export async function analyze_personal_context(args: {
     };
   }
 
-  // ----- Generic: full inclusive summary of what's in the data -----
   return genericSummary(data);
-}
-
-function genericSummary(data: RawData): AnalyzeResult {
-  const profile = data.profile ? "profile (name, emails, phones, addresses)" : "";
-  const devices = Array.isArray(data.devices) ? `devices (${data.devices.length}, incl. serials/IMEI)` : "";
-  const memory = Array.isArray(data.memory) ? `memory (${data.memory.length} saved items)` : "";
-  const custom = data.llm_custom && typeof data.llm_custom === "object" ? data.llm_custom : {};
-  const customKeys = Object.keys(custom);
-  const customSummary =
-    customKeys.length > 0
-      ? `llm_custom (${customKeys.length} categories: ${customKeys.join(", ")})`
-      : "";
-  const goals = data.goals
-    ? `goals (short/mid/long term: ${(data.goals.shortTerm?.length ?? 0) + (data.goals.midTerm?.length ?? 0) + (data.goals.longTerm?.length ?? 0)} total)`
-    : "";
-  const interests = Array.isArray(data.interests) ? `interests (${data.interests.length})` : "";
-  const hobbies = Array.isArray(data.hobbies) ? `hobbies (${data.hobbies.length})` : "";
-  const secrets = data.secrets ? `secrets (${Object.keys(data.secrets).length} categories)` : "";
-  const txns = Array.isArray(data.transaction_history) ? `transactions (${data.transaction_history.length})` : "";
-  const health = Array.isArray(data.health_daily_logs) ? `health logs (${data.health_daily_logs.length})` : "";
-  const journal = Array.isArray(data.dailyJournal) ? `journal (${data.dailyJournal.length})` : "";
-  const mood = Array.isArray(data.moodLogs) ? `mood logs (${data.moodLogs.length})` : "";
-  const scheduled = Array.isArray(data.scheduled_events) ? `scheduled_events (${data.scheduled_events.length})` : "";
-  const notifications = Array.isArray(data.notifications) ? `notifications (${data.notifications.length})` : "";
-  const parts = [profile, devices, memory, customSummary, goals, interests, hobbies, secrets, txns, health, journal, mood, scheduled, notifications].filter(Boolean);
-  return {
-    summary: parts.length === 0
-      ? "No structured personal data found."
-      : `Stored data includes: ${parts.join("; ")}. Ask about a specific topic (e.g. "my phone serial", "goals", "spending", or custom keys like "allergies") for details.`,
-    details: {
-      hasProfile: !!data.profile,
-      deviceCount: Array.isArray(data.devices) ? data.devices.length : 0,
-      hasGoals: !!data.goals,
-      interestsCount: Array.isArray(data.interests) ? data.interests.length : 0,
-      hobbiesCount: Array.isArray(data.hobbies) ? data.hobbies.length : 0,
-      secretKeys: data.secrets ? Object.keys(data.secrets).length : 0,
-      transactionCount: Array.isArray(data.transaction_history) ? data.transaction_history.length : 0,
-      healthLogCount: Array.isArray(data.health_daily_logs) ? data.health_daily_logs.length : 0,
-      journalCount: Array.isArray(data.dailyJournal) ? data.dailyJournal.length : 0,
-      llm_customKeys: customKeys,
-      scheduledCount: Array.isArray(data.scheduled_events) ? data.scheduled_events.length : 0,
-      notificationCount: Array.isArray(data.notifications) ? data.notifications.length : 0,
-    },
-  };
 }

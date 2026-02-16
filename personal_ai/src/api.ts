@@ -5,12 +5,10 @@ import {
   appendOrMergeData,
   isPersonalDataKey,
   getNotifications,
-  getNotificationById,
   removeNotificationById,
   getScheduledEvents,
   removeScheduledEventById,
-} from "./tools/base";
-import { toolMap } from "./tools/index";
+} from "./tools/helper_functions";
 export function createApi(): Hono {
   const app = new Hono();
 
@@ -65,42 +63,15 @@ export function createApi(): Hono {
     console.log("[API] POST /notifications/:id/respond", id);
     try {
       const body = (await c.req.json<{ action?: string }>().catch(() => ({}))) as { action?: string };
-      const action = (body?.action ?? "").toLowerCase();
-      if (action !== "approve" && action !== "reject") {
-        return c.json(formatError(new Error("action must be 'approve' or 'reject'")), 400);
-      }
-      const notification = await getNotificationById(id);
-      if (!notification) {
-        return c.json(formatError(new Error("Notification not found")), 404);
-      }
-      if (action === "approve") {
-        const toolName = (notification.which_tool_to_call ?? "pay") as string;
-        const toolArgs = (notification.arguments ?? {}) as Record<string, unknown>;
-        const executor = toolMap[toolName];
-        if (executor) {
-          try {
-            const result = await executor(toolArgs);
-            console.log("[API] Tool executed:", toolName, result);
-          } catch (err) {
-            console.error("[API] Tool execution failed:", err);
-            return c.json(
-              formatError(new Error(`Tool ${toolName} failed: ${err instanceof Error ? err.message : String(err)}`)),
-              500
-            );
-          }
-        } else {
-          console.warn("[API] Unknown tool:", toolName, "- skipping execution");
-        }
+      const action = (body?.action ?? "dismiss").toLowerCase();
+      if (action !== "approve" && action !== "reject" && action !== "dismiss") {
+        return c.json(formatError(new Error("action must be 'approve', 'reject', or 'dismiss'")), 400);
       }
       const { found } = await removeNotificationById(id);
       if (!found) {
         return c.json(formatError(new Error("Notification not found")), 404);
       }
-      return c.json({
-        success: true,
-        action,
-        message: action === "approve" ? "Executed and removed" : "Removed",
-      });
+      return c.json({ success: true, action, message: "Notification dismissed" });
     } catch (error) {
       console.log("[API] /notifications/:id/respond error:", error instanceof Error ? error.message : String(error));
       return c.json(formatError(error), 500);
