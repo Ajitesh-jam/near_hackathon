@@ -22,7 +22,8 @@
     "openai": "^5.16.0",
     "axios": "^1.13.5",
     "googleapis": "^133.0.0",
-    "twitter-api-v2": "^1.29.0"
+    "twitter-api-v2": "^1.29.0",
+    "@google/genai": "^1.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
