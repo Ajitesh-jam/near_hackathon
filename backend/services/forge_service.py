@@ -71,7 +71,7 @@ class ForgeService:
         state["agent_id"] = agent_id
         
         # Initialize template_code with basic structure
-        template_code: Dict[str, str] = _copy_template_to_agent(TEMPLATE_DIR, agent_dir)        
+        template_code: Dict[str, str] = _copy_template_to_agent(TEMPLATE_DIR, agent_dir)
         state["template_code"] = template_code
         state["docker_tag"] = f"{DOCKER_HOST}/client-shade-agent:{agent_id}"
         state["current_step"] = "initialized"
@@ -680,11 +680,15 @@ class ForgeService:
             raise ValueError(f"Env file not found for session {session_id}")
         
         env_content = {}
-        # read the env file
+        # read the env file (skip comments and empty lines; only parse KEY=VALUE)
         with open(env_file, "r") as f:
             for line in f:
-                key, value = line.strip().split("=")
-                env_content[key] = value
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    env_content[key.strip()] = value.strip()
         
         logger.info(f"Updating env variables in {env_file}")
         logger.info(f"config.docker_host: {config}")
