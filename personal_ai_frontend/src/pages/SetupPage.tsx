@@ -21,25 +21,35 @@ const SetupPage: React.FC<SetupPageProps> = ({ onComplete }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim()) return;
+
     setLoading(true);
     setError("");
-    console.log("handleSubmit", url);
+
     try {
       const cleanUrl = url.trim().replace(/\/+$/, "");
-      const res = await fetch(`${cleanUrl}/notifications`).catch(() => null);
-      const testUrl =
-        /^https?:\/\/(localhost|127\.0\.0\.1):3000$/i.test(cleanUrl) ? "/agent-api/notifications" : `${cleanUrl}/notifications`;
-      // Test connection (use proxy for localhost:3000 to avoid CORS)
-     
-      if (!res) {
+
+      const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1):3000$/i.test(
+        cleanUrl,
+      );
+
+      // 👇 THIS is the URL you should actually call
+      const requestUrl = isLocal
+        ? "/agent-api/notifications" // uses Vite proxy
+        : `${cleanUrl}/notifications`;
+
+      const res = await fetch(requestUrl).catch(() => null);
+
+      if (!res || !res.ok) {
         setError("Could not reach the server. Check the URL and try again.");
         setLoading(false);
         return;
       }
+
       setBackendUrl(cleanUrl);
       onComplete();
     } catch {
       setError("Connection failed. Please verify the URL.");
+    } finally {
       setLoading(false);
     }
   };
@@ -47,9 +57,27 @@ const SetupPage: React.FC<SetupPageProps> = ({ onComplete }) => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4 relative overflow-hidden">
       {/* Ambient orbs */}
-      <div className="floating-orb w-[500px] h-[500px] -top-60 -left-60" style={{ background: "radial-gradient(circle, hsl(270 80% 60% / 0.15), transparent)" }} />
-      <div className="floating-orb w-[400px] h-[400px] -bottom-40 -right-40" style={{ background: "radial-gradient(circle, hsl(185 75% 50% / 0.12), transparent)" }} />
-      <div className="floating-orb w-[300px] h-[300px] top-1/3 right-1/4" style={{ background: "radial-gradient(circle, hsl(300 70% 55% / 0.08), transparent)" }} />
+      <div
+        className="floating-orb w-[500px] h-[500px] -top-60 -left-60"
+        style={{
+          background:
+            "radial-gradient(circle, hsl(270 80% 60% / 0.15), transparent)",
+        }}
+      />
+      <div
+        className="floating-orb w-[400px] h-[400px] -bottom-40 -right-40"
+        style={{
+          background:
+            "radial-gradient(circle, hsl(185 75% 50% / 0.12), transparent)",
+        }}
+      />
+      <div
+        className="floating-orb w-[300px] h-[300px] top-1/3 right-1/4"
+        style={{
+          background:
+            "radial-gradient(circle, hsl(300 70% 55% / 0.08), transparent)",
+        }}
+      />
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -62,7 +90,10 @@ const SetupPage: React.FC<SetupPageProps> = ({ onComplete }) => {
             animate={{ y: [0, -12, 0] }}
             transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
             className="inline-flex w-20 h-20 rounded-3xl gradient-primary items-center justify-center mb-6 shadow-2xl"
-            style={{ boxShadow: "0 0 50px hsl(var(--glow) / 0.35), 0 0 100px hsl(var(--glow-cyan) / 0.1)" }}
+            style={{
+              boxShadow:
+                "0 0 50px hsl(var(--glow) / 0.35), 0 0 100px hsl(var(--glow-cyan) / 0.1)",
+            }}
           >
             <Bot className="w-10 h-10 text-white" />
           </motion.div>
@@ -110,7 +141,11 @@ const SetupPage: React.FC<SetupPageProps> = ({ onComplete }) => {
             required
           />
           {error && (
-            <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm text-destructive">
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="text-sm text-destructive"
+            >
               {error}
             </motion.p>
           )}

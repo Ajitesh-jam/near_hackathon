@@ -10,7 +10,7 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 const app = createApi();
-
+app.use(cors());
 // Explicit OPTIONS preflight so browser gets Access-Control-Allow-Headers and sends the actual POST
 const preflightHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,7 +26,14 @@ app.use("*", async (c, next) => {
 });
 
 // CORS for non-OPTIONS responses so browser can read the body
-app.use("*", cors({ origin: "*", allowMethods: ["GET", "POST", "OPTIONS"], allowHeaders: ["Content-Type"] }));
+app.use(
+  "*",
+  cors({
+    origin: "*",
+    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowHeaders: ["Content-Type"],
+  }),
+);
 
 app.use("*", async (c, next) => {
   const method = c.req.method;
@@ -34,7 +41,9 @@ app.use("*", async (c, next) => {
   const start = Date.now();
   console.log(`[${new Date().toISOString()}] ${method} ${path}`);
   await next();
-  console.log(`[${new Date().toISOString()}] ${method} ${path} ${c.res.status} ${Date.now() - start}ms`);
+  console.log(
+    `[${new Date().toISOString()}] ${method} ${path} ${c.res.status} ${Date.now() - start}ms`,
+  );
 });
 
 const port = Number(process.env.PORT || "3000");
