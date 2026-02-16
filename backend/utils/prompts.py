@@ -92,14 +92,14 @@ Reactive Tools: {reactive_tools}
 - Add short comments for missing env vars or setup steps.
 
 Example pattern (described, not exact code):
-- Import the main agent function from the appropriate tool (for example, a function called willExecutorAgent from \"./tools/will_executor\").
+- Import the main agent function from the appropriate tool (for example, a function called willExecutorAgent from \"./tools/will_executor\", or a function called runSchedulerLoop from \"./tools/scheduler\").
 - In runLogic(), start an async IIFE that awaits that function and logs any errors.
 
 If there are multiple tools, run the main entry point that orchestrates them (e.g. the active tool's run loop or agent function).
 
 ---
 
-2) src/contants.ts
+2) src/constants.ts
 - Export all constants and types required for the agent tools to run (config objects, types, defaults).
 - Include types (interfaces) that the tools and logic depend on.
 - Fill values from user intent where possible; use placeholders (e.g. "YOUR_ACCOUNT.testnet") with comments.
@@ -113,13 +113,37 @@ Example (will executor), described structurally:
   - sleepSeconds: number.
   - targetAmountYocto: string or undefined.
   - createdAtISO / updatedAtISO: ISO timestamp strings.
+  
+  
+  Example (personal ai), described structurally:
+  Example (personal ai), described structurally:
+  - Import and call runSchedulerLoop() from "./tools/scheduler" in runLogic().
+  - constants.ts: provide paths for data, personal data types and interfaces, default values, token/model settings.
+  - See below for proper structure.
+
+OUTPUT FORMAT (strict): Return exactly two blocks, in order, with these exact headers. No markdown or extra text.
+
+=== FILE: src/logic.ts ===
+import {{ runSchedulerLoop }} from "./tools/scheduler";
+
+export function runLogic(): void {{
+  console.log("Personal AI Ready");
+  try {{
+    runSchedulerLoop();
+  }} catch (error) {{
+    console.error("Personal AI logic exited unexpectedly:", error);
+  }}  
+}}
+
+=== FILE: src/contants.ts ===
+
 
 OUTPUT FORMAT (strict): Return exactly two blocks, in order, with these exact headers. No markdown or extra text.
 
 === FILE: src/logic.ts ===
 <full TypeScript code for src/logic.ts>
 
-=== FILE: src/contants.ts ===
+=== FILE: src/constants.ts ===
 <full TypeScript code for src/contants.ts>
 """
 

@@ -21,6 +21,11 @@ config = Config()
 # Path to tools storage - TypeScript tools for generated agent
 BASE_TOOLS_DIR = Path(__file__).resolve().parent.parent / "utils" / "tools_storage"
 TOOLS_BASE_TS_PATH = BASE_TOOLS_DIR / "base.ts"
+# Personal AI assistant stored tools and API paths
+PERSONAL_AI_TOOLS_DIR = BASE_TOOLS_DIR / "personal_ai_assistant"
+APIS_STORAGE_DIR = Path(__file__).resolve().parent.parent / "utils" / "apis_storage"
+PERSONAL_AI_API_PATH = APIS_STORAGE_DIR / "personal_ai.ts"
+WILL_EXECUTOR_API_PATH = APIS_STORAGE_DIR / "will_executor.ts"
 # Template dir for contract, LICENSE, .gitignore, docker-compose, sbom, etc.
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "template"
 # TypeScript agent paths
@@ -116,6 +121,82 @@ class ForgeService:
 
         state["current_step"] = "tools_added"
         logger.info(f"Added {len(state['selected_tools'])} tools to agent {state['agent_id']}")
+        return state
+    
+    def _add_personal_ai_assets(self, state: ForgeState) -> ForgeState:
+        """Copies stored personal_ai assistant tools and API into the agent directory."""
+        agent_dir_path = state.get("agent_dir_path")
+        if not agent_dir_path:
+            logger.warning("Agent directory path not found in state while adding personal_ai assets.")
+            return state
+
+        agent_dir = Path(agent_dir_path)
+        src_dir = agent_dir / "src"
+        tools_dir = src_dir / "tools"
+        src_dir.mkdir(parents=True, exist_ok=True)
+        tools_dir.mkdir(parents=True, exist_ok=True)
+
+        # Ensure template_code exists
+        if "template_code" not in state or state["template_code"] is None:
+            state["template_code"] = {}
+
+        # Copy personal_ai assistant tools
+        if PERSONAL_AI_TOOLS_DIR.exists():
+            copied_tools = 0
+            for ts_file in PERSONAL_AI_TOOLS_DIR.glob("*.ts"):
+                try:
+                    content = ts_file.read_text(encoding="utf-8")
+                    target_path = tools_dir / ts_file.name
+                    target_path.write_text(content, encoding="utf-8")
+                    key = f"{SRC_TOOLS_DIR}/{ts_file.name}"
+                    state["template_code"][key] = content
+                    copied_tools += 1
+                except Exception as e:
+                    logger.exception(f"Failed to copy personal_ai tool {ts_file}: {e}")
+            logger.info(f"Copied {copied_tools} personal_ai assistant tools for agent {state.get('agent_id')}")
+        else:
+            logger.warning(f"Personal AI tools directory not found: {PERSONAL_AI_TOOLS_DIR}")
+
+        # Copy personal_ai API file as src/api.ts
+        if PERSONAL_AI_API_PATH.exists():
+            try:
+                api_content = PERSONAL_AI_API_PATH.read_text(encoding="utf-8")
+                api_target = src_dir / "api.ts"
+                api_target.write_text(api_content, encoding="utf-8")
+                state["template_code"]["src/api.ts"] = api_content
+                logger.info(f"Copied personal_ai API to {api_target} for agent {state.get('agent_id')}")
+            except Exception as e:
+                logger.exception(f"Failed to copy personal_ai API file: {e}")
+        else:
+            logger.warning(f"Personal AI API file not found: {PERSONAL_AI_API_PATH}")
+
+        return state
+    
+    def _add_will_executor_assets(self, state: ForgeState) -> ForgeState:
+        """Copies stored will_executor tools and API into the agent directory."""
+        agent_dir_path = state.get("agent_dir_path")
+        if not agent_dir_path:
+            logger.warning("Agent directory path not found in state while adding will_executor assets.")
+            return state
+        agent_dir = Path(agent_dir_path)
+        src_dir = agent_dir / "src"
+        tools_dir = src_dir / "tools"
+        tools_dir.mkdir(parents=True, exist_ok=True)
+
+
+        # Copy will_executor API file as src/api.ts
+        if WILL_EXECUTOR_API_PATH.exists():
+            try:
+                api_content = WILL_EXECUTOR_API_PATH.read_text(encoding="utf-8")
+                api_target = src_dir / "api.ts"
+                api_target.write_text(api_content, encoding="utf-8")
+                state["template_code"]["src/api.ts"] = api_content
+                logger.info(f"Copied will_executor API to {api_target} for agent {state.get('agent_id')}")
+            except Exception as e:
+                logger.exception(f"Failed to copy will_executor API file: {e}")
+        else:
+            logger.warning(f"Will executor API file not found: {WILL_EXECUTOR_API_PATH}")
+
         return state
     
     def _should_wait_for_custom_tools(self, state: ForgeState) -> str:
@@ -410,9 +491,6 @@ class ForgeService:
         if not state:
             return None
         pass
-    
-    
-    
         return dict(state)
     
     def _update_code_state(self, state: ForgeState) -> ForgeState:
@@ -588,6 +666,13 @@ class ForgeService:
         state = self._update_tools_state(state)
         state = self._add_platform_tools(state)
         
+        # If personal_ai_assistant tool is selected, copy its stored tools and API into the agent
+        selected_names = {t.get("name", "").lower() for t in state.get("selected_tools", [])}
+        if "personal ai assistant" in selected_names:
+            state = self._add_personal_ai_assets(state)
+            
+        if "will_executor" in selected_names:
+            state = self._add_will_executor_assets(state)
         # Check if we need custom tools
         if self._should_wait_for_custom_tools(state) == "no":
             state = self._wait_for_prompt(state)
