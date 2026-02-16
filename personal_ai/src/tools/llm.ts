@@ -6,7 +6,7 @@ import {
   createPartFromFunctionCall,
   createPartFromFunctionResponse,
 } from "@google/genai";
-import { readDataFile, readSystemPrompt } from "./base";
+import { readRawDataFile, readSystemPrompt } from "./base";
 import { toolMap, geminiToolDeclarations } from "./index";
 import { LLM_MODEL } from "../constants";
 
@@ -41,10 +41,33 @@ export async function runAgent(userMessage: string): Promise<string> {
   });
 
   const systemPrompt = await readSystemPrompt();
-  const userData = await readDataFile();
+  const rawData = (await readRawDataFile()) as Record<string, unknown>;
+  const memory = Array.isArray(rawData.memory) ? rawData.memory : [];
+  const llmCustom = rawData.llm_custom && typeof rawData.llm_custom === "object" ? rawData.llm_custom : {};
+  const memoryContents = memory.map((m: unknown) =>
+    typeof m === "object" && m && "content" in m ? (m as { content: string }).content : String(m)
+  );
+  const customContents = Object.entries(llmCustom as Record<string, unknown[]>).flatMap(([k, arr]) =>
+    (Array.isArray(arr) ? arr : []).map((v: unknown) =>
+      typeof v === "object" && v && "content" in v ? `[${k}] ${(v as { content: string }).content}` : `[${k}] ${String(v)}`
+    )
+  );
+  const memoryContext =
+    memoryContents.length > 0 || customContents.length > 0
+      ? `\n\nMemory / saved items (check here if user asks about secrets or facts not in structured data): ${JSON.stringify([...memoryContents, ...customContents])}`
+      : "";
+  const notifications = Array.isArray(rawData.notifications) ? rawData.notifications : [];
+  const notificationsContext =
+    notifications.length > 0
+      ? `\n\nPending notifications (user needs to act on these; surface them proactively): ${JSON.stringify(notifications)}`
+      : "";
+  const nowIso = new Date().toISOString();
+  const timeContext = `\n\nCurrent time (message received): ${nowIso}. Use this to compute schedule_event time_of_occur for relative phrases: "tomorrow" = add 1 day, "in 1 week" = add 7 days, "one month later" = add ~30 days, etc. Always output ISO 8601.`;
   const dataContext =
-    "User Private Data (use tools to retrieve details): profile (name, addresses, emails, phones, IDs), devices (including phone serial numbers and IMEI), goals (short/mid/long term), interests, hobbies, secrets, transactions, health/mood/journal. Always call analyze_personal_context when the user asks to remember, recall, look up personal info, or when they ask for an intro/introduction, to describe themselves, or to tell someone about their interests or hobbies. Raw summary: " +
-    JSON.stringify(userData);
+    "User Private Data (use tools to retrieve details): profile (name, addresses, emails, phones, IDs), devices (including phone serial numbers and IMEI), goals (short/mid/long term), interests, hobbies, secrets, transactions, health/mood/journal, scheduled_events, notifications. Always call analyze_personal_context when the user asks to remember, recall, look up personal info. Use save_personal_info for facts to remember; use field 'secrets' for passwords/credentials, never memory. Use schedule_event for reminders and future payments." +
+    timeContext +
+    memoryContext +
+    notificationsContext;
   const initialUserContent = createUserContent(
     `${systemPrompt}\n\n${dataContext}\n\nUser: ${userMessage}`
   );
