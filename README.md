@@ -146,6 +146,8 @@ The Will Executor is an autonomous agent that runs continuously inside a TEE. It
 4. **Execution Trigger:** If **all** monitored accounts show no recent activity beyond the grace period, the agent executes the will.
 5. **Payout:** It distributes NEAR from the agent's vault (or a fixed `targetAmountYocto`) to beneficiaries according to their split percentages, via `pay_by_agent` from `@neardefi/shade-agent-js`.
 
+working demo: https://www.youtube.com/watch?v=BBRtAD0hobM
+
 ### Will Entry Structure
 
 The will is represented by a `will_entry` object with the following fields:
