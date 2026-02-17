@@ -197,8 +197,7 @@ Environment variables (e.g., `GOOGLE_API_KEY`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_
 ## 🔗 Live Demos
 
 - **Deployed WallE Agent:** [https://14bee907669e86509fa4fd53b9389aba27264bf7-3000.dstack-prod5.phala.network](https://14bee907669e86509fa4fd53b9389aba27264bf7-3000.dstack-prod5.phala.network)
-- **Presentation Prompt:** See [`PRESENTATION_PROMPT.md`](PRESENTATION_PROMPT.md) for a full prompt to generate hackathon/demo slides with any presentation AI.
-- **Project Dashboard:** [nearhackathon.vercel.app](https://nearhackathon.vercel.app)
+- **Project Dashboard:** [nearhackathon.vercel.app](https://nearhackathon.vercel.app). If you get CORS error, please raise an issue to : ajitesh.jam@gmail.com
 
 ### Proof of Deployment
 
