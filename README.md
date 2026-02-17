@@ -88,6 +88,7 @@ The project is organized into three main layers:
 
 The ultimate digital vault with a brain. WallE manages your **Confidential RAG** (Knowledge Base) and handles high-stakes tasks.
 
+presentation : https://youtu.be/vrtfVB_0Blc
 **Capabilities:**
 
 - **Confidentiality:** "WallE, what is my Netflix password?" or "WallE, here is my private medical log for today."
